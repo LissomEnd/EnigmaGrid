@@ -42,6 +42,11 @@ assert "hostname" not in meta and "python" not in meta
 assert "uuid" not in meta["gpus"][0]
 
 assert c.version_tuple("0.3.0") < c.version_tuple("0.3.1")
+os.environ.pop("GRID_ALLOW_NON_LOOPBACK",None)
+assert c.bind_host_allowed("127.0.0.1")
+assert c.bind_host_allowed("::1")
+assert not c.bind_host_allowed("0.0.0.0")
+assert not c.bind_host_allowed("192.168.1.10")
 assert c.worker_update_required({"meta_json":'{"worker_version":"0.2.9"}'})==(True,"0.3.0")
 assert c.worker_update_required({"meta_json":'{"worker_version":"0.3.0"}'})==(False,"0.3.0")
 

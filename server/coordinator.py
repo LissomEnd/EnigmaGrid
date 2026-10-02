@@ -697,9 +697,16 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             con.execute("rollback");raise
 
+def bind_host_allowed(host):
+    host=str(host or "").strip().lower()
+    if host in {"127.0.0.1","::1","localhost"}:return True
+    return os.environ.get("GRID_ALLOW_NON_LOOPBACK","").lower() in {"1","true","yes","on"}
+
 def main():
     init_db();cfg=load_cfg();host=cfg.get("host","127.0.0.1");port=int(cfg.get("port",8765))
-    print(f"Enigma Volunteer Grid v0.2 listening on http://{host}:{port}",flush=True)
+    if not bind_host_allowed(host):
+        raise SystemExit("Refusing non-loopback bind. Use Tailscale Funnel; set GRID_ALLOW_NON_LOOPBACK only inside an isolated container.")
+    print(f"Enigma Volunteer Grid v0.3 listening on http://{host}:{port}",flush=True)
     LimitedThreadingHTTPServer((host,port),Handler,max_workers=int(cfg.get("max_http_workers",64))).serve_forever()
 
 if __name__=="__main__":main()

@@ -9,6 +9,7 @@ services:
       GRID_DATA_DIR: /data
       GRID_HOST: 0.0.0.0
       GRID_PORT: 8765
+      GRID_ALLOW_NON_LOOPBACK: "true"
       GRID_REGISTRATION_CODE: ${GRID_REGISTRATION_CODE}
       GRID_REGISTRATION_OPEN: "false"
       GRID_TRUST_PROXY: "true"
