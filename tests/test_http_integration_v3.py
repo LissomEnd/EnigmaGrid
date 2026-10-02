@@ -93,6 +93,14 @@ def main():
         lease_response=http_json(base+"/api/lease","POST",{"meta":{}},a["device_token"])
         la=lease_response.get("lease")
         assert la and la["segment_id"]=="it-seg" and la["purpose"]=="primary",lease_response
+        previous_id=la['id']
+        http_json(base+'/api/device/settings','POST',{'settings':{'cpu_percent':0,'gpu_percent':0}},a['device_token'])
+        assert http_json(base+'/api/lease','POST',{},a['device_token'])['lease'] is None
+        http_json(base+'/api/device/settings','POST',{'settings':{'cpu_percent':50,'gpu_percent':0}},a['device_token'])
+        replacement=http_json(base+'/api/lease','POST',{},a['device_token'])['lease']
+        assert replacement['id']!=previous_id
+        assert (replacement['start_unit'],replacement['end_unit'])==(la['start_unit'],la['end_unit'])
+        la=replacement
         result=demo_result(la["segment_id"],la["start_unit"],la["end_unit"],20)
         ack1=http_json(base+"/api/complete","POST",
                        {"lease_id":la["id"],"work_token":la["work_token"],

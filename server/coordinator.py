@@ -684,6 +684,13 @@ class Handler(BaseHTTPRequestHandler):
             if old:
                 seg=con.execute("select * from segments where id=?",(old["segment_id"],)).fetchone()
                 ok,res,pct=device_eligible(dev,seg)
+                if not ok:
+                    con.execute("update leases set status='expired',expires_at=? where id=?",(now(),old['id']))
+                    if old['purpose']=='primary':
+                        con.execute('insert or ignore into requeue(segment_id,start_unit,end_unit,queued_at) values(?,?,?,?)',
+                                    (old['segment_id'],old['start_unit'],old['end_unit'],now()))
+                    con.execute('commit')
+                    return self.send_json(200,{'enabled':True,'lease':None})
                 con.execute("commit");return self.send_json(200,{"enabled":True,"lease":lease_obj(old,res,pct)})
             vr,res,pct=validation_candidate(con,dev)
             if vr:
