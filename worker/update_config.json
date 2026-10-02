@@ -1,0 +1,8 @@
+{
+  "github_repo": "",
+  "channel": "stable",
+  "check_interval_seconds": 21600,
+  "manifest_name": "update-manifest.json",
+  "signature_name": "update-manifest.sig",
+  "asset_name": "enigma-volunteer-windows.zip"
+}

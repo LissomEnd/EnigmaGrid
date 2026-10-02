@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Enigma Volunteer Grid</title><link rel="stylesheet" href="/style.css">
+</head><body><main>
+<h1>Enigma Volunteer Grid</h1>
+<p class="muted">Volunteer computing for P1030680. Credit is granted only after independent validation.</p>
+<div class="grid">
+<div class="card"><div class="label">Global progress</div><div class="big" id="pct">—</div></div>
+<div class="card"><div class="label">Verified units</div><div class="big" id="done">—</div></div>
+<div class="card"><div class="label">Online devices</div><div class="big" id="online">—</div></div>
+<div class="card"><div class="label">Pending validation</div><div class="big" id="pending">—</div></div>
+</div>
+<div class="card"><div class="bar"><div class="fill" id="fill"></div></div><p class="muted" id="progressText"></p>
+<p class="muted"><span id="cpuOnline">0</span> CPU workers · <span id="gpuOnline">0</span> GPU workers</p></div>
+<div class="grid">
+<div class="card"><h2>Top contributors</h2><table><thead><tr><th>Name</th><th>Verified units</th><th>Jobs</th><th>Compute s</th></tr></thead><tbody id="leaders"></tbody></table></div>
+<div class="card"><h2>My contribution</h2><p class="muted">Your private dashboard token is kept only for this browser session.</p>
+<div class="row"><input id="dash" type="password" autocomplete="off" placeholder="Dashboard token"><button id="loadBtn">Load</button></div>
+<div id="me"></div></div></div>
+<div class="card"><h2>Campaigns</h2><div id="campaigns"></div></div>
+<script src="/app.js" defer></script></main></body></html>

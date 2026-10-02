@@ -1,0 +1,53 @@
+services:
+  coordinator:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      GRID_CONFIG: /app/config/server.production.json
+      GRID_DATA_DIR: /data
+      GRID_HOST: 0.0.0.0
+      GRID_PORT: 8765
+      GRID_REGISTRATION_CODE: ${GRID_REGISTRATION_CODE}
+      GRID_REGISTRATION_OPEN: "false"
+      GRID_TRUST_PROXY: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+      NUMBA_CACHE_DIR: /data/numba-cache
+    volumes:
+      - grid_data:/data
+      - ./server.production.json:/app/config/server.production.json:ro
+    expose:
+      - "8765"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    environment:
+      GRID_DOMAIN: ${GRID_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  grid_data:
+  caddy_data:
+  caddy_config:

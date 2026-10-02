@@ -1,0 +1,152 @@
+{
+  "campaign": {
+    "id": "p1030680-global-v1",
+    "name": "P1030680 Global Volunteer Search",
+    "version": "1.0.0-draft",
+    "status": "prepared",
+    "notes": "Draft giant append-only campaign. Do not activate before independent validation."
+  },
+  "segments": [
+    {
+      "id": "evt-low-v1",
+      "label": "Dynamic events / plugboard 0-3",
+      "engine": "event_stochastic_v1",
+      "start_unit": 0,
+      "end_unit": 250000,
+      "chunk_size": 1,
+      "priority": 10,
+      "config": {
+        "base_attempt": 1000000000,
+        "count_per_unit": 32768,
+        "iterations": 1000,
+        "topk": 8,
+        "min_pairs": 0,
+        "max_pairs": 3,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "evt-normal-a-v1",
+      "label": "Dynamic events / plugboard 4-10 A",
+      "engine": "event_stochastic_v1",
+      "start_unit": 0,
+      "end_unit": 250000,
+      "chunk_size": 1,
+      "priority": 20,
+      "config": {
+        "base_attempt": 2000000000,
+        "count_per_unit": 32768,
+        "iterations": 1000,
+        "topk": 8,
+        "min_pairs": 4,
+        "max_pairs": 10,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "evt-normal-b-v1",
+      "label": "Dynamic events / plugboard 4-10 B",
+      "engine": "event_stochastic_v1",
+      "start_unit": 0,
+      "end_unit": 250000,
+      "chunk_size": 1,
+      "priority": 30,
+      "config": {
+        "base_attempt": 3000000000,
+        "count_per_unit": 32768,
+        "iterations": 1000,
+        "topk": 8,
+        "min_pairs": 4,
+        "max_pairs": 10,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "evt-extended-v1",
+      "label": "Dynamic events / plugboard 11-13",
+      "engine": "event_stochastic_v1",
+      "start_unit": 0,
+      "end_unit": 250000,
+      "chunk_size": 1,
+      "priority": 40,
+      "config": {
+        "base_attempt": 4000000000,
+        "count_per_unit": 32768,
+        "iterations": 1000,
+        "topk": 8,
+        "min_pairs": 11,
+        "max_pairs": 13,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "restart-v1",
+      "label": "Restart / discontinuity stochastic",
+      "engine": "event_stochastic_v1",
+      "start_unit": 0,
+      "end_unit": 250000,
+      "chunk_size": 1,
+      "priority": 50,
+      "config": {
+        "base_attempt": 5000000000,
+        "count_per_unit": 32768,
+        "iterations": 1100,
+        "topk": 8,
+        "min_pairs": 0,
+        "max_pairs": 13,
+        "event_kinds": [
+          6
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    }
+  ]
+}

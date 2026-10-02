@@ -1,0 +1,21 @@
+{
+  "id": "P1030680",
+  "date": "1945-05-01",
+  "platform": "U-534",
+  "machine_family": "Enigma M4",
+  "indicator_groups": [
+    "VROL",
+    "NMKA"
+  ],
+  "ciphertext": "JCRSAJTGSJEYEXYKKZZSHVUOCTRFRCRPFVYPLKPPLGRHVVBBTBRSXSWXGGTYTVKQNGSCHVGF",
+  "known_plaintext": null,
+  "unknown": [
+    "reflector",
+    "greek",
+    "moving_rotors",
+    "positions",
+    "rings",
+    "plugboard"
+  ],
+  "assumptions": []
+}

@@ -1,0 +1,17 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "registration_open": false,
+  "registration_code": "CHANGE-ME",
+  "registration_pow_bits": 18,
+  "lease_seconds": 900,
+  "online_seconds": 60,
+  "max_body_bytes": 262144,
+  "replicas_required": 2,
+  "max_replicas": 3,
+  "rate_limit_per_minute": 180,
+  "trust_proxy": false,
+  "min_worker_version": "0.3.0",
+  "github_repo": "OWNER/REPOSITORY",
+  "update_check_seconds": 21600
+}
