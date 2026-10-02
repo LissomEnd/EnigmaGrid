@@ -8,7 +8,7 @@ Include the affected version, reproduction steps, impact and any proposed mitiga
 ## Update trust model
 Clients accept update packages only when the release manifest verifies against the Ed25519 public key embedded in the worker and the downloaded asset matches the signed SHA-256 and size.
 
-The private release-signing key is intentionally kept off the public coordinator and must never be committed to GitHub. GitHub artifact attestations are an additional provenance signal, not a replacement for the pinned release signature.
+The private release-signing key is kept outside the repository in an ACL-restricted DPAPI CurrentUser vault on Lenovo and must never be committed to GitHub. Normal signing decrypts it only in memory. This protects against repository/CI disclosure and offline theft of the blob, but a compromise running as the Lenovo signing user could still obtain signing authority. GitHub artifact attestations are an additional provenance signal, not a replacement for the pinned release signature.
 
 ## Server exposure
 The coordinator must bind to loopback only. Public access must go through Tailscale Funnel or an equivalent authenticated TLS reverse tunnel. Do not port-forward the coordinator from the home router.

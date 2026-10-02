@@ -212,11 +212,15 @@ def worker_update_required(dev):
     return version_tuple(current)<version_tuple(minimum),minimum
 
 def update_device_runtime(con,dev,body):
-    meta=sanitize_meta(body.get("meta",{}) if isinstance(body,dict) else {})
-    caps=capabilities_from_meta(meta)
-    con.execute("""update devices set last_seen=?,meta_json=?,capabilities_json=? where id=?""",
-                (now(),json.dumps(meta,separators=(",",":")),
-                 json.dumps(caps,separators=(",",":")),dev["id"]))
+    supplied=body.get("meta") if isinstance(body,dict) else None
+    if isinstance(supplied,dict) and supplied:
+        meta=sanitize_meta(supplied)
+        caps=capabilities_from_meta(meta)
+        con.execute("""update devices set last_seen=?,meta_json=?,capabilities_json=? where id=?""",
+                    (now(),json.dumps(meta,separators=(",",":")),
+                     json.dumps(caps,separators=(",",":")),dev["id"]))
+    else:
+        con.execute("update devices set last_seen=? where id=?",(now(),dev["id"]))
 
 def trust_penalty(con,device_id,severe=False,reason="invalid"):
     delta=0.35 if severe else 0.15
