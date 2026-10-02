@@ -205,11 +205,22 @@ class UpdateManager:
         with self.lock:
             p=dict(self.pending or {})
             if not self.apply_requested or not p:return False
-        script=HERE/"updater_apply.py"
-        cmd=[sys.executable,str(script),"--parent-pid",str(os.getpid()),
-             "--install-root",str(install_root),"--state",str(self.state_path),
-             "--server",self.server_url,"--asset",p["asset"],
-             "--manifest",p["manifest"],"--signature",p["signature"]]
+        frozen=bool(getattr(sys,"frozen",False))
+        if frozen:
+            helper=Path(install_root)/"EnigmaGridUpdater.exe"
+            if not helper.exists():raise FileNotFoundError("EnigmaGridUpdater.exe")
+            apply_dir=self.state_path.parent/"update-runner"
+            apply_dir.mkdir(parents=True,exist_ok=True)
+            runner=apply_dir/"EnigmaGridUpdater.exe"
+            import shutil
+            shutil.copy2(helper,runner)
+            cmd=[str(runner)]
+        else:
+            script=HERE/"updater_apply.py"
+            cmd=[sys.executable,str(script)]
+        cmd += ["--parent-pid",str(os.getpid()),"--install-root",str(install_root),
+                "--state",str(self.state_path),"--server",self.server_url,
+                "--asset",p["asset"],"--manifest",p["manifest"],"--signature",p["signature"]]
         flags=0
         if os.name=="nt":
             flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)

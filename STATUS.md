@@ -49,3 +49,13 @@ No GitHub remote exists and nothing has been published.
 - Current candidate ZIP SHA-256: `863DB06FF6997D608B901838A5CD86E4903AB6784271A40914BB14DC2E4D44E2`.
 - Candidate archive contains only the two executables and SHA256SUMS; the legacy Python uninstaller was intentionally removed.
 - IMPORTANT: frozen auto-update download/verification code is present, but replacement/restart of the standalone executable has not yet passed an end-to-end update test. Do not publish this candidate as the final public release until that path is completed.
+
+## Frozen auto-update — 2026-10-02
+- Standalone package now includes a separate `EnigmaGridUpdater.exe` helper.
+- The worker copies the updater helper to the user state directory before applying an update, so the installed updater can safely replace itself.
+- Tray exits gracefully through an `update-exit` marker; computation is already at a safe point before replacement.
+- Signed frozen update success path tested end-to-end with the real Ed25519 DPAPI signing key: PASS.
+- Forced post-swap version mismatch (`9.9.9`) tested rollback: previous executables restored and old worker restarted, updater exit code 4 as designed: PASS.
+- Mandatory-update refusal no longer causes the tray to restart the stopped worker.
+- Current three-executable candidate ZIP SHA-256: `0CC82E031E80450C57FD9B59620E951A5D3F7BCE79034518BFDBBD18FE388FE0`.
+- A user-friendly install/autostart/uninstall flow remains the next standalone milestone.

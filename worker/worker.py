@@ -283,6 +283,7 @@ def work(args,state):
                 time.sleep(args.idle_seconds);continue
             if updater and updater.stop_requested:
                 print("Mandatory update declined: stopping safely.",flush=True)
+                c=read_control(state_path);c["stop_requested"]=True;write_control(state_path,c)
                 return 0
             if updater and updater.apply_requested:
                 updater.shutdown()
@@ -318,6 +319,7 @@ def work(args,state):
             print(json.dumps({"completed":lease["id"],"seconds":round(secs,3),"ack":ack}),flush=True)
             if updater and updater.stop_requested:
                 print("Mandatory update declined: current work finished; closing.",flush=True)
+                c=read_control(state_path);c["stop_requested"]=True;write_control(state_path,c)
                 return 0
             if updater and updater.apply_requested:
                 updater.shutdown()
@@ -340,11 +342,18 @@ def main():
     ap.add_argument("--name",default="");ap.add_argument("--device-label",default="");ap.add_argument("--contributor-key",default="")
     ap.add_argument("--private-credit",action="store_true");ap.add_argument("--state",default=str(Path.home()/".enigma-volunteer"/"client.json"))
     ap.add_argument("--show-secrets",action="store_true")
+    ap.add_argument("--self-test",action="store_true")
     ap.add_argument("--once",action="store_true");ap.add_argument("--disable",action="store_true")
     ap.add_argument("--register-only",action="store_true")
     ap.add_argument("--set-preferences",action="store_true");ap.add_argument("--cpu-percent",type=int,default=50)
     ap.add_argument("--gpu-percent",type=int,default=0);ap.add_argument("--idle-seconds",type=int,default=5)
-    args=ap.parse_args();state_path=Path(args.state);state=load_state(state_path)
+    args=ap.parse_args()
+    if args.self_test:
+        h=hardware();assert "cpu_count" in h
+        import numpy, numba
+        print(json.dumps({"ok":True,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__}))
+        return
+    state_path=Path(args.state);state=load_state(state_path)
     if state is None:
         if not args.server:raise SystemExit("First run requires --server (or ENIGMA_GRID_SERVER)")
         state=register(args,state_path);print("Registered device",state["device_id"],flush=True)

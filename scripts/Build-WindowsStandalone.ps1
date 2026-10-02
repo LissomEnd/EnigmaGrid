@@ -22,6 +22,13 @@ $worker=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--noconsole",
 & $py @worker
 if($LASTEXITCODE -ne 0){throw "Worker build failed"}
 
+$updater=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--noconsole",
+  "--name","EnigmaGridUpdater","--distpath",$out,"--workpath","$work\updater","--specpath",$spec,
+  "--add-data","$root\worker\update_public_key.json;worker",
+  "$root\worker\updater_apply.py")
+& $py @updater
+if($LASTEXITCODE -ne 0){throw "Updater build failed"}
+
 $hashes=Get-ChildItem $out -File | Get-FileHash -Algorithm SHA256
 $hashes | ForEach-Object {"$($_.Hash)  $([IO.Path]::GetFileName($_.Path))"} | Set-Content "$out\SHA256SUMS.txt" -Encoding ASCII
 $zip="$root\dist\enigma-volunteer-windows-candidate.zip"

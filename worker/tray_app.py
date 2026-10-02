@@ -180,9 +180,16 @@ class App:
             except Exception as e:self.status_var.set("Worker launch failed: "+str(e))
 
     def refresh_status(self):
-        if not self.setup_mode:self.ensure_worker()
+        update_exit=STATE.with_name("update-exit")
+        if update_exit.exists():
+            try:update_exit.unlink()
+            except Exception:pass
+            self.quit_all();return
         c=control()
+        if not self.setup_mode and not c.get("stop_requested"):self.ensure_worker()
         if self.setup_mode:s="Setup required"
+        elif c.get("stop_requested") and not is_alive():
+            self.quit_all();return
         elif c.get("stop_requested"):s="Stopping safely…"
         elif c.get("paused"):s="Paused"
         elif is_alive():s="Contributing"
