@@ -1,4 +1,5 @@
 -r requirements.txt
 pyinstaller==6.16.0
 pystray==0.19.5
-Pillow==11.3.0
+Pillow==12.3.0
+pyopencl==2026.1.4

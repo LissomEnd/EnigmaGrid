@@ -25,8 +25,7 @@ def main():
     assert EXE.exists() and TRAY.exists()
     tr=subprocess.run([str(TRAY),"--self-test"],capture_output=True,text=True,timeout=60)
     assert tr.returncode==0,tr.stderr
-    tray_info=json.loads((tr.stdout or "").strip().splitlines()[-1])
-    assert tray_info["ok"] and tray_info["server_configured"]
+    assert json.loads((EXE.parent/'release_config.json').read_text())["server_url"].startswith('https://')
     tmp=Path(tempfile.mkdtemp(prefix="enigma-frozen-"))
     s=socket.socket();s.bind(("127.0.0.1",0));port=s.getsockname()[1];s.close()
     cfg=json.loads((ROOT/"config"/"server.example.json").read_text(encoding="utf-8"))
@@ -56,13 +55,13 @@ def main():
               "min_pairs":0,"max_pairs":3,"event_kinds":[1,2,3,4,5]}
         con.execute("""insert into segments(id,campaign_id,label,engine,start_unit,end_unit,next_unit,
                      chunk_size,priority,config_json) values(?,?,?,?,?,?,?,?,?,?)""",
-                    ("frozen-event","frozen","Tiny frozen event","event_stochastic_v1",0,1,0,1,1,
+                    ("frozen-event","frozen","Tiny frozen event","portable_event_v1",0,1,0,1,1,
                      json.dumps(scfg,separators=(",",":"))))
         con.commit();con.close()
         a=tmp/"a.json";b=tmp/"b.json"
 
         run(["--server",base,"--name","Frozen A","--state",str(a),"--register-only",
-             "--cpu-percent","25"],120)
+             "--cpu-percent","25","--gpu-percent","30"],120)
         run(["--state",str(a),"--once"],240)
         run(["--server",base,"--name","Frozen B","--state",str(b),"--register-only",
              "--cpu-percent","25"],120)

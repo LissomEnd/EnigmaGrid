@@ -26,7 +26,19 @@ jobs:
         run: python tests/test_quarantine_v2.py
       - name: Security tests
         run: python tests/test_security_v3.py
+      - name: Native input bounds
+        run: python tests/test_validator_bounds.py
+      - name: Coordinator transport safety
+        run: python tests/test_worker_transport.py
+      - name: Safe uninstall paths
+        run: python tests/test_cleanup_safety.py
+      - name: Shared proxy rate limits
+        run: python tests/test_rate_limits.py
       - name: HTTP integration test
         run: python tests/test_http_integration_v3.py
       - name: Public surface test
         run: python tests/test_public_surface_v3.py
+      - name: Portable search determinism
+        run: python tests/test_portable_search.py
+      - name: Worker resource and pause controls
+        run: python tests/test_worker_controls.py

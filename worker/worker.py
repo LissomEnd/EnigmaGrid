@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import socket
+import secrets
 import subprocess
 import sys
 import threading
@@ -22,17 +23,20 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
 INSTALL_ROOT=Path(sys.executable).resolve().parent if FROZEN else SOURCE_ROOT
 _HW=None
 _WORKER_MUTEX=None
+_GPU_SCORERS=[]
 
 def acquire_worker_mutex():
     global _WORKER_MUTEX
     if os.name!="nt":return True
+    ctypes.windll.kernel32.CreateMutexW.restype=ctypes.c_void_p
+    ctypes.windll.kernel32.CloseHandle.argtypes=[ctypes.c_void_p]
     h=ctypes.windll.kernel32.CreateMutexW(None,False,"Local\\EnigmaVolunteerGridWorker")
     if not h:raise ctypes.WinError()
     if ctypes.windll.kernel32.GetLastError()==183:
@@ -41,6 +45,8 @@ def acquire_worker_mutex():
 
 def validate_server_url(server):
     p=urlparse(server)
+    if not p.hostname or p.username or p.password or p.query or p.fragment:
+        raise ValueError("Server URL must contain a host and no credentials, query or fragment")
     if p.scheme=="https": return
     if p.scheme!="http": raise ValueError("Server URL must use https, or http on a private/local network")
     host=(p.hostname or "").lower()
@@ -52,10 +58,24 @@ def validate_server_url(server):
     except ValueError:pass
     raise ValueError("Refusing plaintext HTTP to a public server; use HTTPS")
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        raise ValueError("Coordinator redirects are not allowed")
+
+def _response_json(req,timeout):
+    # Never forward device credentials to a redirected host; bound untrusted replies.
+    opener=urllib.request.build_opener(_NoRedirect())
+    with opener.open(req,timeout=timeout) as response:  # nosec B310 - validated coordinator URL
+        body=response.read(4*1024*1024+1)
+    if len(body)>4*1024*1024:raise ValueError("Coordinator response too large")
+    result=json.loads(body)
+    if not isinstance(result,dict):raise ValueError("Invalid coordinator response")
+    return result
+
 def get_json(server,path,timeout=30):
     validate_server_url(server)
     req=urllib.request.Request(server.rstrip("/")+path,headers={"User-Agent":"EnigmaVolunteerGrid/"+VERSION})
-    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())  # nosec B310 - validate_server_url above
+    return _response_json(req,timeout)
 
 def post(server,path,obj,token=None,timeout=30):
     validate_server_url(server)
@@ -63,7 +83,7 @@ def post(server,path,obj,token=None,timeout=30):
     headers={"Content-Type":"application/json"}
     if token:headers["X-Device-Token"]=token
     req=urllib.request.Request(server.rstrip("/")+path,data=data,headers=headers)
-    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())  # nosec B310 - validate_server_url above
+    return _response_json(req,timeout)
 
 def detect_nvidia():
     try:
@@ -78,8 +98,24 @@ def detect_nvidia():
 def hardware():
     global _HW
     if _HW is not None:return _HW
-    gpus=detect_nvidia();caps=["cpu"]
-    if gpus:caps+=["gpu","cuda"]
+    gpus=[];caps=["cpu"]
+    sys.path.insert(0,str(ROOT/"solver"/"runtime"/"src"))
+    try:
+        from search.portable_search import opencl_devices, qualify_device
+        import numba
+        previous=numba.get_num_threads();numba.set_num_threads(min(2,previous))
+        try:
+            text=json.loads((ROOT/"solver/runtime/data/messages/p1030680.json").read_text())["ciphertext"]
+            for device in opencl_devices():
+                try:
+                    scorer=qualify_device(device,text)
+                    _GPU_SCORERS.append(scorer)
+                    gpus.append({"vendor":device.vendor.strip(),"name":device.name.strip(),
+                                 "memory_mb":device.global_mem_size//(1024*1024),"backend":"opencl"})
+                except Exception:continue
+        finally:numba.set_num_threads(previous)
+    except Exception:pass
+    if gpus:caps += ["gpu","opencl"]
     _HW={"worker_version":VERSION,"platform":platform.platform(),
          "cpu_count":os.cpu_count() or 1,"machine":platform.machine(),
          "gpus":gpus,"capabilities":caps}
@@ -104,8 +140,11 @@ def apply_cpu_limit(percent):
     total=os.cpu_count() or 1
     try:
         if os.name=="nt":
-            mask=(1<<n)-1
-            ctypes.windll.kernel32.SetProcessAffinityMask(ctypes.windll.kernel32.GetCurrentProcess(),mask)
+            kernel=ctypes.windll.kernel32
+            kernel.GetCurrentProcess.restype=ctypes.c_void_p
+            kernel.SetProcessAffinityMask.argtypes=[ctypes.c_void_p,ctypes.c_size_t]
+            mask=(1<<min(n,ctypes.sizeof(ctypes.c_size_t)*8))-1
+            kernel.SetProcessAffinityMask(kernel.GetCurrentProcess(),mask)
         elif hasattr(os,"sched_setaffinity"):
             os.sched_setaffinity(0,set(range(n)))
     except Exception:pass
@@ -156,7 +195,7 @@ def save_state(path,obj):
     tmp.replace(path)
 
 def save_plain_json(path,obj):
-    path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".tmp")
+    path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_name(path.name+"."+secrets.token_hex(4)+".tmp")
     tmp.write_text(json.dumps(obj,separators=(",",":")),encoding="utf-8");tmp.replace(path)
 
 def control_path(state_path):
@@ -211,23 +250,36 @@ def heartbeat_once(state,runtime):
     return r
 def heartbeat_loop(stop,state,runtime):
     while not stop.wait(20):
+        publish_health(runtime)
         try:heartbeat_once(state,runtime)
         except Exception:pass
 
+def publish_health(runtime, status=None):
+    if status:runtime["status"]=status
+    path=runtime.get("health_path")
+    if path:
+        save_plain_json(path,{"version":VERSION,"pid":os.getpid(),"started":runtime.get("started",time.time()),
+                              "heartbeat":time.time(),"status":runtime.get("status","starting"),
+                              "resource":runtime.get("resource","cpu"),"progress":runtime.get("progress",0)})
+
 def client_summary(state_path):
     state=load_state(Path(state_path))
-    hw=hardware()
+    hw=_HW or {}
     base={"registered":bool(state),"hardware":{"cpu_count":hw.get("cpu_count",1),
           "capabilities":hw.get("capabilities",[]),"gpus":hw.get("gpus",[])},
           "worker_version":VERSION}
     if not state:return base
     base["server"]=state.get("server","")
     base["settings"]=normalize_settings(state.get("settings",{}))
+    base["device_id"]=state.get("device_id","")
     try:base["global"]=get_json(state["server"],"/api/public/status",10)
     except Exception as e:base["global_error"]=type(e).__name__
     token=state.get("dashboard_token","")
     if token:
-        try:base["personal"]=post(state["server"],"/api/me",{"dashboard_token":token},timeout=10)
+        try:
+            base["personal"]=post(state["server"],"/api/me",{"dashboard_token":token},timeout=10)
+            for d in base["personal"].get("devices",[]):
+                if d["id"]==state.get("device_id"):base["settings"]=d["settings"]
         except Exception as e:base["personal_error"]=type(e).__name__
     return base
 
@@ -258,9 +310,67 @@ def run_event_stochastic(lease):
     out.sort(key=lambda x:x.get("score",-1e99),reverse=True);out=out[:max(topk,12)]
     return {"summary":{"engine":"event_stochastic_v1","units":lease["end_unit"]-lease["start_unit"]},
             "candidates":out},len(out)
-def execute(lease):
+def run_portable(lease,runtime=None,state_path=None):
+    from concurrent.futures import ThreadPoolExecutor
+    from search.portable_search import search,score_cpu
+    from search.cpu_numba import encode
+    import numpy as np
+    cfg=lease["config"]
+    text=json.loads((ROOT/"solver/runtime/data/messages/p1030680.json").read_text())["ciphertext"]
+    inp=encode(text);runtime=runtime or {}
+    settings=runtime.get("settings",{"cpu_percent":50,"gpu_percent":0})
+    gpu=bool(_GPU_SCORERS and settings.get("allow_gpu",True) and settings.get("gpu_percent",0)>0)
+    cpu=bool(settings.get("allow_cpu",True) and settings.get("cpu_percent",0)>0)
+    backend="opencl" if gpu else "cpu"
+    runtime["resource"]="CPU + GPU" if gpu and cpu else ("GPU" if gpu else "CPU")
+    threads=cpu_threads(settings.get("cpu_percent",50)) or 1
+    def cpu_score(keys):
+        import numba
+        numba.set_num_threads(min(threads,numba.config.NUMBA_NUM_THREADS))
+        return score_cpu(inp,keys)
+    pool=ThreadPoolExecutor(max_workers=1) if gpu and cpu else None
+    def scorer(keys):
+        if gpu and cpu and len(keys)>1:
+            middle=len(keys)//2
+            future=pool.submit(cpu_score,keys[:middle])
+            right=_GPU_SCORERS[0](keys[middle:])
+            return np.concatenate((future.result(),right))
+        return _GPU_SCORERS[0](keys) if gpu else cpu_score(keys)
+    def checkpoint(offset,iteration):
+        if not state_path:return
+        ctl=read_control(state_path)
+        while ctl["paused"] and not ctl["stop_requested"]:
+            publish_health(runtime,"paused");time.sleep(.25);ctl=read_control(state_path)
+        count=max(1,int(cfg.get("count_per_unit",4096)))
+        iterations=max(1,int(cfg.get("iterations",512)))
+        unit_progress=(offset+min(256,count-offset)*iteration/iterations)/count
+        runtime["progress"]=(unit-int(lease["start_unit"])+unit_progress)/max(1,int(lease["end_unit"])-int(lease["start_unit"]))
+        # Health writes are throttled; the separate heartbeat also covers compilation.
+        if time.monotonic()-runtime.get("last_local_health",0)>2:
+            publish_health(runtime,"stopping" if ctl["stop_requested"] else "computing")
+            runtime["last_local_health"]=time.monotonic()
+    out=[]
+    try:
+        for unit in range(int(lease["start_unit"]),int(lease["end_unit"])):
+            count=int(cfg.get("count_per_unit",4096));topk=int(cfg.get("topk",8))
+            hits=search(text,int(cfg.get("base_attempt",71000000000))+unit*count,
+                        count=count,iterations=int(cfg.get("iterations",512)),topk=topk,
+                        min_pairs=int(cfg.get("min_pairs",0)),max_pairs=int(cfg.get("max_pairs",13)),
+                        event_kinds=tuple(cfg.get("event_kinds",[1,2,3,4,5,6])),backend=backend,
+                        percent=int(settings.get("gpu_percent",100)) if gpu else 100,
+                        checkpoint=checkpoint,scorer=scorer)
+            for hit in hits:hit["unit"]=unit
+            out.extend(hits)
+        runtime["progress"]=1.0
+    finally:
+        if pool:pool.shutdown(wait=True)
+    out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
+    return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
+
+def execute(lease,runtime=None,state_path=None):
     if lease["engine"]=="demo_hash":return run_demo(lease)
     if lease["engine"]=="event_stochastic_v1":return run_event_stochastic(lease)
+    if lease["engine"]=="portable_event_v1":return run_portable(lease,runtime,state_path)
     raise RuntimeError("Unsupported engine: "+repr(lease["engine"]))
 
 def gpu_cooldown(percent,compute_seconds):
@@ -285,18 +395,22 @@ def work(args,state):
     updater=UpdateManager(VERSION,state_path,state["server"]) if UpdateManager else None
     if updater:updater.start()
     started=time.time()
-    save_plain_json(health_path,{"version":VERSION,"started":started,"heartbeat":started})
+    runtime.update(health_path=health_path,started=started)
+    publish_health(runtime,"starting")
     while True:
         try:
-            save_plain_json(health_path,{"version":VERSION,"started":started,"heartbeat":time.time()})
+            publish_health(runtime)
             control=read_control(state_path)
             if control["stop_requested"]:
                 print("Safe stop requested; worker is idle and will close.",flush=True)
-                control["stop_requested"]=False;write_control(state_path,control);return 0
+                publish_health(runtime,"stopped")
+                if updater:updater.shutdown()
+                return 0
             if control["check_update"]:
                 control["check_update"]=False;write_control(state_path,control)
                 if updater:updater.force_check()
             if control["paused"]:
+                publish_health(runtime,"paused")
                 time.sleep(args.idle_seconds);continue
             if updater and updater.stop_requested:
                 print("Mandatory update declined: stopping safely.",flush=True)
@@ -310,12 +424,15 @@ def work(args,state):
             hb=heartbeat_once(state,runtime)
             if hb.get("update_required") and updater:updater.force_check()
             if not runtime["enabled"]:
+                publish_health(runtime,"disabled")
+                c=read_control(state_path);c["stop_requested"]=True;write_control(state_path,c)
                 print("Worker disabled or quarantined by coordinator.");return 0
             st=runtime["settings"];runtime["cpu_threads"]=apply_cpu_limit(st["cpu_percent"])
             got=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
             if got.get("update_required") and updater:updater.force_check()
             lease=got.get("lease")
             if not lease:
+                publish_health(runtime,"waiting")
                 if args.once:return 0
                 time.sleep(args.idle_seconds);continue
             resource=lease.get("resource_class","cpu");pct=int(lease.get("resource_percent",100))
@@ -325,8 +442,9 @@ def work(args,state):
                 time.sleep(args.idle_seconds);continue
             print(f"Lease {lease['id']} {lease['purpose']} {resource}@{pct}% {lease['segment_label']} {lease['start_unit']}:{lease['end_unit']}",flush=True)
             stop=threading.Event();th=threading.Thread(target=heartbeat_loop,args=(stop,state,runtime),daemon=True);th.start()
+            publish_health(runtime,"computing")
             t=time.time()
-            try:result,candidates=execute(lease)
+            try:result,candidates=execute(lease,runtime,state_path)
             finally:stop.set();th.join(timeout=2)
             secs=time.time()-t
             ack=post(state["server"],"/api/complete",
@@ -343,12 +461,13 @@ def work(args,state):
                 if updater.launch_apply(INSTALL_ROOT):
                     print("Verified update ready; restarting at safe point.",flush=True)
                     return 0
-            if resource=="gpu":
+            if resource=="gpu" and lease.get("engine")!="portable_event_v1":
                 cool=gpu_cooldown(pct,secs)
                 if cool>0:time.sleep(cool)
             if args.once:return 0
         except KeyboardInterrupt:return 130
         except Exception as e:
+            publish_health(runtime,"connection_error")
             print(json.dumps({"worker_error":repr(e)}),flush=True)
             if args.once:return 2
             time.sleep(10)
@@ -361,6 +480,7 @@ def main():
     ap.add_argument("--show-secrets",action="store_true")
     ap.add_argument("--self-test",action="store_true")
     ap.add_argument("--client-summary-json",action="store_true")
+    ap.add_argument("--dashboard-token",action="store_true",help="Print the private dashboard token locally")
     ap.add_argument("--once",action="store_true");ap.add_argument("--disable",action="store_true")
     ap.add_argument("--register-only",action="store_true")
     ap.add_argument("--set-preferences",action="store_true");ap.add_argument("--cpu-percent",type=int,default=50)
@@ -377,6 +497,9 @@ def main():
         print(json.dumps(client_summary(args.state),ensure_ascii=False))
         return
     state_path=Path(args.state);state=load_state(state_path)
+    if args.dashboard_token:
+        if not state or not state.get("dashboard_token"):raise SystemExit("No dashboard token available")
+        print(state["dashboard_token"]);return
     if state is None:
         if not args.server:raise SystemExit("First run requires --server (or ENIGMA_GRID_SERVER)")
         state=register(args,state_path);print("Registered device",state["device_id"],flush=True)

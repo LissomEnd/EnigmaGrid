@@ -52,6 +52,10 @@ assert status=="verified",status
 assert [r["credited"] for r in rows]==[1,1,0],rows
 assert rows[2]["status"]=="rejected",rows
 assert dev[2]["invalid_jobs"]==1,dev
+progress=c.progress_payload(con)
+assert progress['total_units']==1 and progress['completed_units']==1,progress
+assert progress['progress_pct']==100,progress
+assert progress['campaigns'][0]['status']=='complete',progress
 print(json.dumps({"status":status,"submissions":rows,"devices":dev},indent=2))
 con.close()
 shutil.rmtree(TMP)

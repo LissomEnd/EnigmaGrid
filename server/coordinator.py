@@ -1,4 +1,5 @@
 import hashlib
+import math
 import json
 import os
 import secrets
@@ -19,6 +20,9 @@ DB=Path(os.environ.get("GRID_DB",str(DATA/"grid.sqlite3")))
 WEB=ROOT/"web"/"index.html"
 RATE=defaultdict(deque)
 RATE_SALT=secrets.token_bytes(32)
+RATE_LOCK=threading.Lock()
+GLOBAL_RATE=deque()
+REGISTER_RATE=deque()
 LAST_PRUNE=0.0
 
 def load_cfg():
@@ -164,7 +168,7 @@ def sanitize_meta(meta):
          "machine":str(meta.get("machine",""))[:32],
          "cpu_count":max(1,min(1024,int(meta.get("cpu_count",1) or 1))),
          "gpus":gpus,
-         "capabilities":[x for x in (meta.get("capabilities") or []) if x in {"cpu","cuda","rocm","gpu"}]}
+         "capabilities":[x for x in (meta.get("capabilities") or []) if x in {"cpu","cuda","rocm","gpu","opencl"}]}
     if isinstance(meta.get("effective_settings"),dict):
         out["effective_settings"]=normalize_settings(meta["effective_settings"])
     if "cpu_threads_effective" in meta:
@@ -175,7 +179,7 @@ def capabilities_from_meta(meta):
     meta=sanitize_meta(meta)
     caps={"cpu"}
     for x in meta.get("capabilities",[]) or []:
-        if x in {"cpu","cuda","rocm","gpu"}: caps.add(x)
+        if x in {"cpu","cuda","rocm","gpu","opencl"}: caps.add(x)
     if meta.get("gpus"):
         caps.add("gpu")
         if any(str(g.get("vendor","")).lower()=="nvidia" for g in meta["gpus"] if isinstance(g,dict)):
@@ -257,6 +261,12 @@ def device_eligible(dev,seg):
     caps=set(parse_json(dev["capabilities_json"],["cpu"]))
     cfg=segment_config(seg); req=set(cfg.get("requires",["cpu"]))
     if not req.issubset(caps):return False,None,0
+    if seg["engine"]=="portable_event_v1":
+        use_cpu=settings["allow_cpu"] and settings["cpu_percent"]>0
+        use_gpu="opencl" in caps and settings["allow_gpu"] and settings["gpu_percent"]>0
+        if use_gpu:return True,"hybrid" if use_cpu else "gpu",settings["gpu_percent"]
+        if use_cpu:return True,"cpu",settings["cpu_percent"]
+        return False,None,0
     if "cuda" in req or "gpu" in req or "rocm" in req:
         if not settings["allow_gpu"] or settings["gpu_percent"]<=0:return False,None,0
         return True,"gpu",settings["gpu_percent"]
@@ -316,7 +326,8 @@ def next_primary(con,dev):
         if ok: choices.append((r["priority"],0,r,r["start_unit"],r["end_unit"],res,pct,True))
     segs=con.execute("""select s.* from segments s join campaigns c on c.id=s.campaign_id
                         where c.status='running' and s.next_unit<s.end_unit
-                        order by s.priority,s.id limit 500""").fetchall()
+                        order by s.priority,
+                          (s.next_unit-s.start_unit)*1.0/max(1,s.end_unit-s.start_unit),s.id limit 500""").fetchall()
     for s in segs:
         ok,res,pct=device_eligible(dev,s)
         if ok:
@@ -402,10 +413,10 @@ def prune_private_data(con):
 def progress_payload(con):
     prune_private_data(con);expire_leases(con);refresh_campaign_completion(con)
     total=con.execute("""select coalesce(sum(s.end_unit-s.start_unit),0) n from segments s
-                         join campaigns c on c.id=s.campaign_id where c.status='running'""").fetchone()["n"]
+                         join campaigns c on c.id=s.campaign_id where c.status in ('running','complete')""").fetchone()["n"]
     done=con.execute("""select coalesce(sum(dr.end_unit-dr.start_unit),0) n from done_ranges dr
                         join segments s on s.id=dr.segment_id join campaigns c on c.id=s.campaign_id
-                        where c.status='running'""").fetchone()["n"]
+                        where c.status in ('running','complete')""").fetchone()["n"]
     pending=con.execute("""select count(*) n from validations v join segments s on s.id=v.segment_id
                            join campaigns c on c.id=s.campaign_id where c.status='running'
                            and v.status='pending'""").fetchone()["n"]
@@ -449,10 +460,27 @@ def rate_key(handler):
     return sha(RATE_SALT.hex()+raw)
 
 def allowed_request(handler):
-    cfg=load_cfg();limit=int(cfg.get("rate_limit_per_minute",180));key=rate_key(handler);q=RATE[key];t=now()
-    while q and q[0]<t-60:q.popleft()
-    if len(q)>=limit:return False
-    q.append(t);return True
+    cfg=load_cfg();limit=int(cfg.get("rate_limit_per_minute",180));key=rate_key(handler);t=now()
+    # Funnel peers share a loopback address. Give anonymous dashboard reads a
+    # shared budget; retain tighter registration and per-device limits below.
+    if not handler.headers.get('X-Device-Token','').strip():
+        limit=int(cfg.get('anonymous_rate_per_minute',6000))
+    with RATE_LOCK:
+        for window in (GLOBAL_RATE,REGISTER_RATE):
+            while window and window[0]<t-60:window.popleft()
+        if len(GLOBAL_RATE)>=int(cfg.get("global_rate_per_minute",12000)):return False
+        GLOBAL_RATE.append(t)
+        if urlparse(handler.path).path in {"/api/register","/api/register-challenge"}:
+            if len(REGISTER_RATE)>=int(cfg.get("registration_rate_per_minute",120)):return False
+            REGISTER_RATE.append(t)
+        if key not in RATE and len(RATE)>=4096:
+            stale=[k for k,v in RATE.items() if not v or v[-1]<t-60]
+            for k in stale:RATE.pop(k,None)
+            if len(RATE)>=4096:return False
+        q=RATE[key]
+        while q and q[0]<t-60:q.popleft()
+        if len(q)>=limit:return False
+        q.append(t);return True
 
 class LimitedThreadingHTTPServer(ThreadingHTTPServer):
     daemon_threads=True
@@ -480,7 +508,9 @@ class Handler(BaseHTTPRequestHandler):
         super().setup()
         self.request.settimeout(15)
     def version_string(self): return "EnigmaVolunteerGrid"
-    def log_message(self,fmt,*args): print(fmt%args,flush=True)
+    def log_message(self,fmt,*args):
+        # Do not log user-controlled URLs, IPs, headers or credentials.
+        pass
     def security_headers(self):
         self.send_header("X-Content-Type-Options","nosniff")
         self.send_header("X-Frame-Options","DENY")
@@ -488,15 +518,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Permissions-Policy","camera=(), microphone=(), geolocation=(), usb=(), payment=()")
         self.send_header("Cross-Origin-Opener-Policy","same-origin")
         self.send_header("Cross-Origin-Resource-Policy","same-origin")
+        self.send_header("Strict-Transport-Security","max-age=31536000")
         self.send_header("Content-Security-Policy","default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
     def send_json(self,code,obj):
         data=json.dumps(obj,separators=(",",":")).encode()
         self.send_response(code);self.send_header("Content-Type","application/json");self.send_header("Cache-Control","no-store")
         self.security_headers();self.send_header("Content-Length",str(len(data)));self.end_headers();self.wfile.write(data)
     def body(self):
+        if self.headers.get("Transfer-Encoding"):raise ValueError("unsupported_transfer_encoding")
+        if len(self.headers.get_all("Content-Length",[]))!=1:raise ValueError("content_length_required")
+        if self.headers.get("Content-Type","").split(";",1)[0].strip().lower()!="application/json":
+            raise ValueError("json_content_type_required")
         n=int(self.headers.get("Content-Length","0"));mx=int(load_cfg().get("max_body_bytes",262144))
         if n<0 or n>mx:raise ValueError("body_too_large")
-        return json.loads(self.rfile.read(n) or b"{}")
+        def reject_constant(value):raise ValueError("non_finite_json")
+        obj=json.loads(self.rfile.read(n) or b"{}",parse_constant=reject_constant)
+        if not isinstance(obj,dict):raise ValueError("json_object_required")
+        return obj
     def token(self):return self.headers.get("X-Device-Token","").strip()
     def do_GET(self):
         if not allowed_request(self):return self.send_json(429,{"error":"rate_limited"})
@@ -528,7 +566,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not allowed_request(self):return self.send_json(429,{"error":"rate_limited"})
         try:b=self.body()
-        except Exception as e:return self.send_json(400,{"error":str(e)})
+        except Exception:return self.send_json(400,{"error":"invalid_request_body"})
         u=urlparse(self.path);con=db()
         try:
             if u.path=="/api/register":return self.register(con,b)
@@ -558,6 +596,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=="/api/device/disable":
                 con.execute("update devices set enabled=0 where id=?",(dev["id"],));return self.send_json(200,{"ok":True,"enabled":False})
             return self.send_json(404,{"error":"not_found"})
+        except (TypeError,ValueError,KeyError,OverflowError):
+            if con.in_transaction:con.rollback()
+            return self.send_json(400,{"error":"invalid_request_fields"})
+        except sqlite3.OperationalError:
+            if con.in_transaction:con.rollback()
+            return self.send_json(503,{"error":"temporarily_unavailable"})
         finally:con.close()
     def register(self,con,b):
         cfg=load_cfg()
@@ -678,6 +722,7 @@ class Handler(BaseHTTPRequestHandler):
             raw=json.dumps(clean,separators=(",",":"),sort_keys=True);sid=rid("sub")
             wall=max(0.0,now()-float(lease["leased_at"]))
             client_secs=max(0.0,float(b.get("compute_seconds",0) or 0))
+            if not math.isfinite(client_secs):raise ValueError("invalid_compute_seconds")
             safe_secs=min(client_secs,wall+5.0)
             safe_candidates=len(clean.get("candidates",[])) if isinstance(clean.get("candidates"),list) else 0
             con.execute("""insert into submissions(id,lease_id,segment_id,start_unit,end_unit,device_id,contributor_id,

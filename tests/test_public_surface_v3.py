@@ -53,6 +53,13 @@ def main():
         assert code==200 and "registration_code" not in body.decode()
         code,_,_=request(base+"/api/register","POST",{"display_name":"blocked"})
         assert code in (403,429)
+        for body in ([],"invalid",123,None):
+            if body is None:continue
+            code,_,_=request(base+"/api/register","POST",body)
+            assert code==400,(body,code)
+        code,_,_=request(base+"/api/me","POST",{"dashboard_token":[]})
+        assert code in (400,403)
+        assert request(base+"/health")[0]==200
         print("PUBLIC_SURFACE_V3_OK")
     finally:
         proc.terminate()

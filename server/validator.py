@@ -18,6 +18,25 @@ def fingerprint(result):
 def _round(x):
     return round(float(x),6)
 
+def _letters(value, length):
+    return isinstance(value,str) and len(value)==length and all("A"<=c<="Z" for c in value)
+
+def _validate_key(key):
+    # Validate before entering native code: encoded values index fixed-size arrays.
+    if not isinstance(key,dict):raise ValueError("invalid_key")
+    if not _letters(key.get("rings"),4) or not _letters(key.get("positions"),4):
+        raise ValueError("invalid_key_positions")
+    rotors=key.get("moving_rotors")
+    if not isinstance(rotors,list) or len(rotors)!=3 or any(not isinstance(r,str) for r in rotors) or len(set(rotors))!=3:
+        raise ValueError("invalid_moving_rotors")
+    if not isinstance(key.get("reflector"),str) or not isinstance(key.get("greek"),str):
+        raise ValueError("invalid_shell")
+    pairs=key.get("plugboard",[])
+    if not isinstance(pairs,list) or len(pairs)>13 or any(not _letters(p,2) for p in pairs):
+        raise ValueError("invalid_plugboard")
+    letters="".join(pairs)
+    if len(set(letters))!=len(letters):raise ValueError("invalid_plugboard")
+
 def _demo_expected(lease):
     cfg=lease["config"]; rounds=int(cfg.get("hash_rounds",2000)); best=None
     for unit in range(int(lease["start_unit"]),int(lease["end_unit"])):
@@ -26,7 +45,7 @@ def _demo_expected(lease):
         hx=h.hex()
         if best is None or hx<best["hash"]: best={"unit":unit,"hash":hx}
     return {"summary":{"engine":"demo_hash","best":best,"rounds":rounds}}
-def _event_candidate(c,lease):
+def _event_candidate(c,lease,engine="event_stochastic_v1"):
     import numpy as np
     from search.event_stochastic import (
         EVENT_NAMES,SHELLS,QTAB,decrypt_score_event,key_arrays
@@ -35,25 +54,36 @@ def _event_candidate(c,lease):
     if not isinstance(c,dict): raise ValueError("candidate_not_object")
     unit=int(c["unit"]); start=int(lease["start_unit"]); end=int(lease["end_unit"])
     if unit<start or unit>=end: raise ValueError("candidate_unit_outside_lease")
-    cfg=lease["config"]; count=int(cfg.get("count_per_unit",32768))
-    base=int(cfg.get("base_attempt",310000000)); attempt=int(c["attempt"])
+    cfg=lease["config"]; portable=engine=="portable_event_v1"
+    count=int(cfg.get("count_per_unit",4096 if portable else 32768))
+    base=int(cfg.get("base_attempt",71000000000 if portable else 310000000)); attempt=int(c["attempt"])
     lo=base+unit*count
     if attempt<lo or attempt>=lo+count: raise ValueError("candidate_attempt_outside_unit")
     plain=str(c["plaintext"])
-    if len(plain)!=72 or not plain.isalpha() or plain.upper()!=plain:
+    if not _letters(plain,72):
         raise ValueError("invalid_plaintext")
-    key=c["key"]; si,rings,pos,plug=key_arrays(key)
-    m=c.get("metrics",{}); ev=m.get("event",{})
+    key=c["key"]; _validate_key(key)
+    try:si,rings,pos,plug=key_arrays(key)
+    except (KeyError,ValueError,TypeError,IndexError) as exc:raise ValueError("invalid_shell") from exc
+    m=c.get("metrics",{})
+    if not isinstance(m,dict):raise ValueError("invalid_metrics")
+    ev=m.get("event",{})
+    if not isinstance(ev,dict):raise ValueError("invalid_event")
     reverse={v:k for k,v in EVENT_NAMES.items()}
     kind=reverse.get(ev.get("kind"))
     if kind is None: raise ValueError("invalid_event_kind")
+    if kind not in cfg.get("event_kinds",[1,2,3,4,5,6] if portable else [1,2,3,4,5]):raise ValueError("event_outside_campaign")
+    pairs=len(key.get("plugboard",[]))
+    if not int(cfg.get("min_pairs",0)) <= pairs <= int(cfg.get("max_pairs",13)):
+        raise ValueError("plugboard_outside_campaign")
     at=int(ev.get("at",-1))
     if at<0 or at>=72: raise ValueError("invalid_event_at")
     param=int(ev.get("distance",1))
+    if kind==3 and not 1<=param<=4:raise ValueError("invalid_rewind_distance")
     rpos=pos.copy()
     if kind==6:
         rp=str(ev.get("restart_positions",""))
-        if len(rp)!=4: raise ValueError("missing_restart_positions")
+        if not _letters(rp,4): raise ValueError("invalid_restart_positions")
         rpos=encode(rp)
     msg=json.loads((RUNTIME/"data"/"messages"/"p1030680.json").read_text(encoding="utf-8"))
     inp=encode(msg["ciphertext"])
@@ -80,10 +110,11 @@ def validate_result(engine,result,lease):
             raise ValueError("demo_result_mismatch")
         clean=expected
         return clean,fingerprint(clean)
-    if engine!="event_stochastic_v1":
+    if engine not in {"event_stochastic_v1","portable_event_v1"}:
         raise ValueError("unsupported_engine")
     summary=result.get("summary",{})
-    if summary.get("engine")!="event_stochastic_v1":
+    if not isinstance(summary,dict):raise ValueError("invalid_summary")
+    if summary.get("engine")!=engine:
         raise ValueError("engine_summary_mismatch")
     expected_units=int(lease["end_unit"])-int(lease["start_unit"])
     if int(summary.get("units",-1))!=expected_units:
@@ -91,12 +122,12 @@ def validate_result(engine,result,lease):
     candidates=result.get("candidates",[])
     if not isinstance(candidates,list) or len(candidates)>32:
         raise ValueError("candidate_count_invalid")
-    topk=int(lease["config"].get("topk",6))
+    topk=int(lease["config"].get("topk",8 if engine=="portable_event_v1" else 6))
     expected_count=min(max(topk,12),topk*expected_units)
     if len(candidates)!=expected_count:
         raise ValueError("candidate_count_mismatch")
-    clean_candidates=[_event_candidate(c,lease) for c in candidates]
+    clean_candidates=[_event_candidate(c,lease,engine) for c in candidates]
     clean_candidates.sort(key=lambda x:(-x["score"],x["attempt"]))
-    clean={"summary":{"engine":"event_stochastic_v1","units":expected_units},
+    clean={"summary":{"engine":engine,"units":expected_units},
            "candidates":clean_candidates}
     return clean,fingerprint(clean)

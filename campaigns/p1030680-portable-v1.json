@@ -1,0 +1,101 @@
+{
+  "campaign": {
+    "id": "p1030680-portable-v1",
+    "name": "P1030680 CPU and OpenCL Volunteer Search",
+    "version": "1.0.0",
+    "status": "prepared",
+    "notes": "Deterministic integer-scored heuristic search across six event models and three plugboard profiles. Progress measures this scheduled campaign, not exhaustive keyspace coverage or probability of decryption. CPU and qualified OpenCL devices reproduce the same trajectories."
+  },
+  "segments": [
+    {
+      "id": "portable-low-v1",
+      "label": "Dynamic events / 0-3 plugboard pairs",
+      "engine": "portable_event_v1",
+      "start_unit": 0,
+      "end_unit": 25000,
+      "chunk_size": 1,
+      "priority": 10,
+      "config": {
+        "base_attempt": 71000000000,
+        "count_per_unit": 4096,
+        "iterations": 512,
+        "topk": 8,
+        "min_pairs": 0,
+        "max_pairs": 3,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "portable-normal-v1",
+      "label": "Dynamic events / 4-10 plugboard pairs",
+      "engine": "portable_event_v1",
+      "start_unit": 0,
+      "end_unit": 25000,
+      "chunk_size": 1,
+      "priority": 10,
+      "config": {
+        "base_attempt": 72000000000,
+        "count_per_unit": 4096,
+        "iterations": 512,
+        "topk": 8,
+        "min_pairs": 4,
+        "max_pairs": 10,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    },
+    {
+      "id": "portable-extended-v1",
+      "label": "Dynamic events / 11-13 plugboard pairs",
+      "engine": "portable_event_v1",
+      "start_unit": 0,
+      "end_unit": 25000,
+      "chunk_size": 1,
+      "priority": 10,
+      "config": {
+        "base_attempt": 73000000000,
+        "count_per_unit": 4096,
+        "iterations": 512,
+        "topk": 8,
+        "min_pairs": 11,
+        "max_pairs": 13,
+        "event_kinds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "requires": [
+          "cpu"
+        ],
+        "replicas_required": 2,
+        "max_replicas": 3
+      }
+    }
+  ]
+}

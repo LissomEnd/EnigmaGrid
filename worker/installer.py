@@ -15,7 +15,7 @@ from tkinter import messagebox
 
 APP_ID="EnigmaVolunteerGrid"
 APP_NAME="Enigma Volunteer Grid"
-VERSION="0.3.0"
+VERSION="0.4.0"
 RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
 UNINSTALL_BASE=r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 PAYLOAD_NAMES=("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json")
@@ -70,6 +70,27 @@ def write_control(data,stop=True):
         "paused":False,"stop_requested":bool(stop),"check_update":False}),encoding="utf-8")
     (data/"update-exit").write_text("1",encoding="ascii")
 
+def wait_worker_stopped(data,timeout=600):
+    end=time.monotonic()+timeout
+    while time.monotonic()<end:
+        try:
+            h=json.loads((data/"worker-health.json").read_text())
+            if h.get("status") in {"stopped","disabled"}:return
+            if time.time()-float(h.get("heartbeat",0))>50:return
+        except (FileNotFoundError,ValueError):return
+        time.sleep(.5)
+    raise TimeoutError("The worker is still finishing a job. Wait for it to stop, then try again.")
+
+def shortcut(install,app_id,remove=False):
+    folder=Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs'
+    link=folder/(app_id+'.lnk')
+    if remove:
+        link.unlink(missing_ok=True);return
+    env=os.environ.copy();env['EG_LINK']=str(link);env['EG_APP']=str(install/'EnigmaGrid.exe')
+    script="$w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut($env:EG_LINK); $s.TargetPath=$env:EG_APP; $s.Save()"
+    subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],env=env,
+                   creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),check=True,timeout=30)
+
 def replace_retry(src,dst,timeout=120):
     end=time.time()+timeout
     while time.time()<end:
@@ -82,7 +103,7 @@ def replace_retry(src,dst,timeout=120):
 def register_install(install,data,app_id=APP_ID,autostart=True):
     setup=install/"EnigmaGridSetup.exe"
     tray=install/"EnigmaGrid.exe"
-    if autostart:reg_set(RUN_KEY,app_id,quote(tray))
+    if autostart:reg_set(RUN_KEY,app_id,quote(tray)+' --background')
     else:reg_delete_value(RUN_KEY,app_id)
     u=UNINSTALL_BASE+"\\"+app_id
     reg_set(u,"DisplayName",APP_NAME)
@@ -96,6 +117,8 @@ def register_install(install,data,app_id=APP_ID,autostart=True):
     reg_set(u,"NoModify",1,winreg.REG_DWORD);reg_set(u,"NoRepair",1,winreg.REG_DWORD)
     size_kb=sum(p.stat().st_size for p in install.glob("*") if p.is_file())//1024
     reg_set(u,"EstimatedSize",int(size_kb),winreg.REG_DWORD)
+    reg_set(u,"URLInfoAbout","https://github.com/LissomEnd/EnigmaGrid")
+    shortcut(install,app_id)
 
 def install(args):
     payload,manifest=verify_payload()
@@ -103,12 +126,17 @@ def install(args):
     data=Path(args.data_dir or default_data()).resolve()
     install.mkdir(parents=True,exist_ok=True)
     if any((install/x).exists() for x in PAYLOAD_NAMES):
-        write_control(data,True);time.sleep(4)
+        write_control(data,True);wait_worker_stopped(data);time.sleep(2)
     for name in PAYLOAD_NAMES:
         replace_retry(payload/name,install/name)
     if not getattr(sys,"frozen",False):raise RuntimeError("installer must run frozen")
     replace_retry(Path(sys.executable),install/"EnigmaGridSetup.exe")
     register_install(install,data,args.app_id,not args.no_autostart)
+    (install/'enigmagrid-install.json').write_text(json.dumps({
+        'product':'EnigmaVolunteerGrid','directory':str(install)}),encoding='utf-8')
+    (data/'update-exit').unlink(missing_ok=True)
+    if data.exists():
+        (data/'control.json').write_text(json.dumps({'paused':False,'stop_requested':False,'check_update':False}))
     if not args.no_launch:
         subprocess.Popen([str(install/"EnigmaGrid.exe")],close_fds=True)
     return install
@@ -136,10 +164,11 @@ def launch_cleanup_helper(runner,install):
 def uninstall(args):
     install=Path(args.install_dir or default_install()).resolve()
     data=Path(args.data_dir or default_data()).resolve()
+    if data.exists():write_control(data,True)
+    wait_worker_stopped(data);time.sleep(3)
     reg_delete_value(RUN_KEY,args.app_id)
     reg_delete_tree(UNINSTALL_BASE+"\\"+args.app_id)
-    if data.exists():write_control(data,True)
-    time.sleep(5)
+    shortcut(install,args.app_id,remove=True)
     runner=prepare_cleanup_helper(install)
     for name in PAYLOAD_NAMES:
         try:(install/name).unlink()
@@ -199,7 +228,7 @@ def install_ui(args):
                     messagebox.showinfo(APP_NAME,"Installation complete.\n\nInstalled in:\n"+str(target),parent=w),
                     w.destroy()))
             except Exception as e:
-                w.after(0,lambda:messagebox.showerror(APP_NAME,str(e),parent=w))
+                w.after(0,lambda msg=str(e):messagebox.showerror(APP_NAME,msg,parent=w))
                 w.after(0,lambda:(install_btn.config(state="normal"),cancel.config(state="normal"),status.set("Installation failed")))
         __import__("threading").Thread(target=job,daemon=True).start()
     install_btn.config(command=begin);w.mainloop();return result["code"]
@@ -227,7 +256,7 @@ def uninstall_ui(args):
                 uninstall(args);result["code"]=0
                 w.after(0,lambda:(messagebox.showinfo(APP_NAME,"Enigma Volunteer Grid was removed.",parent=w),w.destroy()))
             except Exception as e:
-                w.after(0,lambda:messagebox.showerror(APP_NAME,str(e),parent=w))
+                w.after(0,lambda msg=str(e):messagebox.showerror(APP_NAME,msg,parent=w))
                 w.after(0,lambda:remove.config(state="normal"))
         __import__("threading").Thread(target=job,daemon=True).start()
     remove.config(command=begin);w.mainloop();return result["code"]

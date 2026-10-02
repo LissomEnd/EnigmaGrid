@@ -10,8 +10,11 @@
   "replicas_required": 2,
   "max_replicas": 3,
   "rate_limit_per_minute": 180,
+  "anonymous_rate_per_minute": 6000,
+  "global_rate_per_minute": 12000,
+  "registration_rate_per_minute": 120,
   "trust_proxy": false,
-  "min_worker_version": "0.3.0",
-  "github_repo": "OWNER/REPOSITORY",
+  "min_worker_version": "0.4.0",
+  "github_repo": "LissomEnd/EnigmaGrid",
   "update_check_seconds": 21600
 }

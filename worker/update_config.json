@@ -1,5 +1,5 @@
 {
-  "github_repo": "",
+  "github_repo": "LissomEnd/EnigmaGrid",
   "channel": "stable",
   "check_interval_seconds": 21600,
   "manifest_name": "update-manifest.json",

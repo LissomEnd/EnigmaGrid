@@ -18,10 +18,16 @@ FROZEN_FILES={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","r
 
 def wait_parent(pid,timeout=120):
     if os.name=="nt":
-        h=ctypes.windll.kernel32.OpenProcess(0x00100000,False,int(pid))
+        kernel=ctypes.windll.kernel32
+        kernel.OpenProcess.restype=ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_uint32]
+        kernel.CloseHandle.argtypes=[ctypes.c_void_p]
+        h=kernel.OpenProcess(0x00100000,False,int(pid))
         if h:
-            ctypes.windll.kernel32.WaitForSingleObject(h,int(timeout*1000))
-            ctypes.windll.kernel32.CloseHandle(h)
+            try:
+                status=kernel.WaitForSingleObject(h,int(timeout*1000))
+                if status!=0:raise TimeoutError('Application has not exited; update postponed')
+            finally:kernel.CloseHandle(h)
         return
 
     end=time.time()+timeout
@@ -113,10 +119,14 @@ def spawn_worker(root,state,server,kind):
     return subprocess.Popen(cmd,creationflags=flags,close_fds=True,
                             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
-def spawn_tray(root,kind):
+def spawn_tray(root,kind,state=None):
     if kind!="frozen":return None
+    env=os.environ.copy()
+    if state is not None:
+        state.with_name('update-exit').unlink(missing_ok=True)
+        env['ENIGMA_GRID_STATE']=str(state)
     flags=getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0
-    return subprocess.Popen([str(root/"EnigmaGrid.exe")],creationflags=flags,close_fds=True,
+    return subprocess.Popen([str(root/"EnigmaGrid.exe"),'--background'],creationflags=flags,close_fds=True,env=env,
                             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 def read_health(path):
@@ -168,11 +178,21 @@ def schedule_self_delete():
 
 def cleanup_install(path,wait_pid=0,timeout=45):
     target=Path(path).resolve()
+    marker=target/'enigmagrid-install.json'
+    # Never recursively delete an arbitrary --cleanup-install directory.
+    record=json.loads(marker.read_text(encoding='utf-8'))
+    if record.get('product')!='EnigmaVolunteerGrid' or Path(record.get('directory','')).resolve()!=target:
+        raise ValueError('Not an EnigmaGrid installation directory')
     if wait_pid:wait_parent(wait_pid,timeout=120)
     end=time.time()+timeout;last=None
     while time.time()<end:
         try:
-            if target.exists():shutil.rmtree(target)
+            for name in ('EnigmaGrid.exe','EnigmaGridWorker.exe','EnigmaGridUpdater.exe',
+                         'EnigmaGridSetup.exe','release_config.json'):
+                (target/name).unlink(missing_ok=True)
+            marker.unlink(missing_ok=True)
+            # Preserve any unrelated files placed in the installation directory.
+            if target.exists() and not any(target.iterdir()):target.rmdir()
             schedule_self_delete();return 0
         except Exception as e:
             last=e;time.sleep(.5)
@@ -245,9 +265,9 @@ def main():
                     if cur.exists():shutil.rmtree(cur,ignore_errors=True)
                     if old.exists():replace_with_retry(old,cur,10)
             spawn_worker(root,state,a.server,kind)
-            spawn_tray(root,kind)
+            spawn_tray(root,kind,state)
             raise SystemExit(4)
-        spawn_tray(root,kind)
+        spawn_tray(root,kind,state)
         shutil.rmtree(stage,ignore_errors=True)
         shutil.rmtree(backup,ignore_errors=True)
     except Exception:

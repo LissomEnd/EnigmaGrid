@@ -62,10 +62,10 @@ def main():
         assert a==b,name
     release=json.loads((install/"release_config.json").read_text(encoding="utf-8"))
     assert str(release["server_url"]).startswith("https://")
-    assert reg_value(RUN_KEY,app_id)==f'"{install/"EnigmaGrid.exe"}"'
+    assert reg_value(RUN_KEY,app_id)==f'"{install/"EnigmaGrid.exe"}" --background'
     u=UNINSTALL_BASE+"\\"+app_id
     assert exists_key(u)
-    assert reg_value(u,"DisplayVersion")=="0.3.0"
+    assert reg_value(u,"DisplayVersion")=="0.4.0"
     data.mkdir(parents=True,exist_ok=True)
     (data/"dummy-secret").write_text("test",encoding="utf-8")
 
