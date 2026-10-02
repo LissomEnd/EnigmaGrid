@@ -41,3 +41,11 @@ No GitHub remote exists and nothing has been published.
 - Clean volunteer source bundle: `dist/enigma-volunteer-dev.zip`, 1,230,263 bytes.
 - Bundle SHA-256: `D9327541AFB8134500501E610320AD9452F989596C5282FA4C15CD55A6614DBD`.
 - Bundle contains 14 files and zero `__pycache__`, `.pyc`, `.nbc` or `.nbi` artifacts.
+
+## Standalone Windows candidate — 2026-10-02
+- PyInstaller build now produces `EnigmaGrid.exe` (tray/control UI) and `EnigmaGridWorker.exe` (headless worker) with no Python prerequisite for volunteers.
+- Frozen candidate was tested end-to-end against an isolated coordinator using a real tiny `event_stochastic` job, independent validation, DPAPI state and final credit: PASS.
+- Tray executable self-test: PASS.
+- Current candidate ZIP SHA-256: `863DB06FF6997D608B901838A5CD86E4903AB6784271A40914BB14DC2E4D44E2`.
+- Candidate archive contains only the two executables and SHA256SUMS; the legacy Python uninstaller was intentionally removed.
+- IMPORTANT: frozen auto-update download/verification code is present, but replacement/restart of the standalone executable has not yet passed an end-to-end update test. Do not publish this candidate as the final public release until that path is completed.

@@ -23,8 +23,21 @@ except Exception as _update_ex:
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
 VERSION="0.3.0"
-ROOT=Path(__file__).resolve().parents[1]
+SOURCE_ROOT=Path(__file__).resolve().parents[1]
+FROZEN=bool(getattr(sys,"frozen",False))
+ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
+INSTALL_ROOT=Path(sys.executable).resolve().parent if FROZEN else SOURCE_ROOT
 _HW=None
+_WORKER_MUTEX=None
+
+def acquire_worker_mutex():
+    global _WORKER_MUTEX
+    if os.name!="nt":return True
+    h=ctypes.windll.kernel32.CreateMutexW(None,False,"Local\\EnigmaVolunteerGridWorker")
+    if not h:raise ctypes.WinError()
+    if ctypes.windll.kernel32.GetLastError()==183:
+        ctypes.windll.kernel32.CloseHandle(h);return False
+    _WORKER_MUTEX=h;return True
 
 def validate_server_url(server):
     p=urlparse(server)
@@ -146,6 +159,23 @@ def save_plain_json(path,obj):
     path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".tmp")
     tmp.write_text(json.dumps(obj,separators=(",",":")),encoding="utf-8");tmp.replace(path)
 
+def control_path(state_path):
+    return Path(state_path).with_name("control.json")
+
+def read_control(state_path):
+    try:
+        obj=json.loads(control_path(state_path).read_text(encoding="utf-8"))
+        return {"paused":bool(obj.get("paused",False)),
+                "stop_requested":bool(obj.get("stop_requested",False)),
+                "check_update":bool(obj.get("check_update",False))}
+    except Exception:return {"paused":False,"stop_requested":False,"check_update":False}
+
+def write_control(state_path,control):
+    save_plain_json(control_path(state_path),{
+        "paused":bool(control.get("paused",False)),
+        "stop_requested":bool(control.get("stop_requested",False)),
+        "check_update":bool(control.get("check_update",False))})
+
 def solve_registration_pow(server):
     c=get_json(server,"/api/register-challenge",30)
     nonce=str(c["nonce"]);bits=int(c["difficulty_bits"])
@@ -231,19 +261,32 @@ def set_preferences(state,cpu,gpu):
     state["settings"]=r.get("settings",st);return r
 
 def work(args,state):
+    if not acquire_worker_mutex():
+        print("Worker already running for this Windows user.",flush=True);return 0
     runtime={"settings":normalize_settings(state.get("settings",{})),"enabled":True}
-    state_path=Path(args.state)
+    state_path=Path(args.state);health_path=state_path.with_name("worker-health.json")
     updater=UpdateManager(VERSION,state_path,state["server"]) if UpdateManager else None
     if updater:updater.start()
-    save_plain_json(ROOT/".worker-health.json",{"version":VERSION,"started":time.time()})
+    started=time.time()
+    save_plain_json(health_path,{"version":VERSION,"started":started,"heartbeat":started})
     while True:
         try:
+            save_plain_json(health_path,{"version":VERSION,"started":started,"heartbeat":time.time()})
+            control=read_control(state_path)
+            if control["stop_requested"]:
+                print("Safe stop requested; worker is idle and will close.",flush=True)
+                control["stop_requested"]=False;write_control(state_path,control);return 0
+            if control["check_update"]:
+                control["check_update"]=False;write_control(state_path,control)
+                if updater:updater.force_check()
+            if control["paused"]:
+                time.sleep(args.idle_seconds);continue
             if updater and updater.stop_requested:
                 print("Mandatory update declined: stopping safely.",flush=True)
                 return 0
             if updater and updater.apply_requested:
                 updater.shutdown()
-                if updater.launch_apply(ROOT):
+                if updater.launch_apply(INSTALL_ROOT):
                     print("Applying verified update at safe point.",flush=True)
                     return 0
             hb=heartbeat_once(state,runtime)
@@ -278,7 +321,7 @@ def work(args,state):
                 return 0
             if updater and updater.apply_requested:
                 updater.shutdown()
-                if updater.launch_apply(ROOT):
+                if updater.launch_apply(INSTALL_ROOT):
                     print("Verified update ready; restarting at safe point.",flush=True)
                     return 0
             if resource=="gpu":
@@ -304,7 +347,6 @@ def main():
     args=ap.parse_args();state_path=Path(args.state);state=load_state(state_path)
     if state is None:
         if not args.server:raise SystemExit("First run requires --server (or ENIGMA_GRID_SERVER)")
-        if not args.registration_code:raise SystemExit("First run requires --registration-code")
         state=register(args,state_path);print("Registered device",state["device_id"],flush=True)
         if args.show_secrets:
             if state.get("dashboard_token"):print("Dashboard token:",state["dashboard_token"],flush=True)

@@ -98,7 +98,7 @@ def main():
     wait_parent(a.parent_pid)
     if backup.exists():shutil.rmtree(backup,ignore_errors=True)
     backup.mkdir()
-    health=root/".worker-health.json"
+    health=state.with_name("worker-health.json")
     try:health.unlink()
     except Exception:pass
     moved=[]

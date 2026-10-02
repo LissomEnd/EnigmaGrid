@@ -15,11 +15,15 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
-      - name: Build source worker bundle
+      - name: Install build dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Build standalone Windows candidate
         shell: pwsh
         run: |
-          ./scripts/Build-WorkerBundle.ps1
-          Copy-Item dist/enigma-volunteer-dev.zip dist/enigma-volunteer-windows.zip
+          ./scripts/Build-WindowsStandalone.ps1
+          Copy-Item dist/enigma-volunteer-windows-candidate.zip dist/enigma-volunteer-windows.zip
+      - name: Test frozen worker and tray
+        run: python tests/test_frozen_candidate.py
       - name: Attest release candidate
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:

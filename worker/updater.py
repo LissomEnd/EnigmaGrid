@@ -15,8 +15,10 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 HERE=Path(__file__).resolve().parent
-CFG=HERE/"update_config.json"
-PUB=HERE/"update_public_key.json"
+RESOURCE_ROOT=Path(getattr(sys,"_MEIPASS",HERE.parent))
+RESOURCE_WORKER=RESOURCE_ROOT/"worker" if getattr(sys,"frozen",False) else HERE
+CFG=RESOURCE_WORKER/"update_config.json"
+PUB=RESOURCE_WORKER/"update_public_key.json"
 
 def version_tuple(v):
     m=re.match(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?",str(v).strip())

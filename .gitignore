@@ -8,6 +8,7 @@ backups/*
 !backups/.gitkeep
 dist/*
 !dist/.gitkeep
+build/
 __pycache__/
 *.pyc
 *.pyo
