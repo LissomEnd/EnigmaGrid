@@ -48,6 +48,7 @@ def db():
 def now(): return time.time()
 def sha(value):
     import hashlib
+    if not isinstance(value,str):raise ValueError('invalid_secret_type')
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 def rid(prefix): return prefix+"_"+secrets.token_urlsafe(12)
@@ -433,6 +434,7 @@ def progress_payload(con):
               where c.public_credit=1 group by c.id order by units desc,compute_seconds desc limit 20""")]
     camps=[dict(r) for r in con.execute("select id,name,version,status,created,notes from campaigns order by created desc")]
     return {"total_units":total,"completed_units":done,"progress_pct":round(done*100/total,6) if total else 0,
+            "registration_open":bool(load_cfg().get('registration_open',False)),
             "online_devices":len(devs),"online_cpu_devices":cpu,"online_gpu_devices":gpu,
             "pending_validations":pending,"leaderboard":leaders,"campaigns":camps,"time":now()}
 
@@ -548,7 +550,7 @@ class Handler(BaseHTTPRequestHandler):
             ctype="text/css; charset=utf-8" if u.path.endswith(".css") else "text/javascript; charset=utf-8"
             self.send_response(200);self.send_header("Content-Type",ctype);self.send_header("Cache-Control","no-store")
             self.security_headers();self.send_header("Content-Length",str(len(data)));self.end_headers();self.wfile.write(data);return
-        if u.path=="/health":return self.send_json(200,{"ok":True,"version":"0.3","time":now()})
+        if u.path=="/health":return self.send_json(200,{"ok":True,"version":"0.4.0","time":now()})
         if u.path=="/api/register-challenge":
             con=db()
             try:return self.send_json(200,new_registration_challenge(con))
@@ -613,8 +615,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(403,{"error":"registration_closed"})
             if not verify_registration_pow(con,b):
                 return self.send_json(403,{"error":"registration_proof_invalid"})
-        name=(b.get("display_name") or "Anonymous volunteer").strip()[:80]
-        label=(b.get("device_label") or "PC").strip()[:80];join=b.get("contributor_key");new_key=dash=None
+        name=b.get("display_name") or "Anonymous volunteer"
+        label=b.get("device_label") or "PC"
+        if not isinstance(name,str) or not isinstance(label,str):raise ValueError('invalid_display_name')
+        name=name.strip()[:80];label=label.strip()[:80];join=b.get("contributor_key");new_key=dash=None
         if join:
             contributor=con.execute("select * from contributors where join_key_hash=?",(sha(join),)).fetchone()
             if not contributor:return self.send_json(403,{"error":"invalid_contributor_key"})
@@ -755,7 +759,7 @@ def main():
     init_db();cfg=load_cfg();host=cfg.get("host","127.0.0.1");port=int(cfg.get("port",8765))
     if not bind_host_allowed(host):
         raise SystemExit("Refusing non-loopback bind. Use Tailscale Funnel; set GRID_ALLOW_NON_LOOPBACK only inside an isolated container.")
-    print(f"Enigma Volunteer Grid v0.3 listening on http://{host}:{port}",flush=True)
+    print(f"Enigma Volunteer Grid v0.4.0 listening on http://{host}:{port}",flush=True)
     LimitedThreadingHTTPServer((host,port),Handler,max_workers=int(cfg.get("max_http_workers",64))).serve_forever()
 
 if __name__=="__main__":main()
