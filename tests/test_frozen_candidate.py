@@ -23,6 +23,10 @@ def run(args,timeout=180):
 
 def main():
     assert EXE.exists() and TRAY.exists()
+    tr=subprocess.run([str(TRAY),"--self-test"],capture_output=True,text=True,timeout=60)
+    assert tr.returncode==0,tr.stderr
+    tray_info=json.loads((tr.stdout or "").strip().splitlines()[-1])
+    assert tray_info["ok"] and tray_info["server_configured"]
     tmp=Path(tempfile.mkdtemp(prefix="enigma-frozen-"))
     s=socket.socket();s.bind(("127.0.0.1",0));port=s.getsockname()[1];s.close()
     cfg=json.loads((ROOT/"config"/"server.example.json").read_text(encoding="utf-8"))

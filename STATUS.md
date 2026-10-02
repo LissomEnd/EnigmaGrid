@@ -1,49 +1,41 @@
 # Status — 2026-10-02
 
-## Current services
-- Lenovo runs Enigma Volunteer Grid coordinator v0.3 on `127.0.0.1:8765` only.
-- Global campaign `p1030680-global-v1` is `prepared`, not activated.
-- C3 is a separate live campaign/service on port 8750 and is not modified by Grid development.
+## Local release candidate
+- Coordinator v0.3 remains bound to `127.0.0.1:8765` on Lenovo.
+- Windows client version: `0.3.0`.
+- Global campaign `p1030680-global-v1` remains `prepared`, not activated.
 - No GitHub remote exists and nothing has been published.
+- Public bootstrap hostname is embedded in `worker/release_config.json`; no private coordinator IP is shipped.
 
-## Distributed grid verified
-- Crash/power-loss lease recovery and exact-range requeue.
-- Duplicate late submissions do not receive duplicate credit.
-- 2-of-2 independent consensus; mismatch expands to 2-of-3; unresolved disagreement enters review.
-- Real `event_stochastic` result reproduction and independent verification.
-- Invalid submissions receive zero credit; repeated serious failures reduce trust and quarantine devices.
-- Capability routing for CPU/CUDA and per-device CPU/GPU percentages.
-- DPAPI client credential storage on Windows; server token hashes only.
-- Public metadata sanitization removes hostname, Python details and GPU UUID.
-- Loopback-only coordinator bind guard.
+## Product state
+- Branded Windows Setup, tray application, worker and updater are built as standalone executables.
+- First-run onboarding no longer asks volunteers for a server URL.
+- CPU/GPU percentages, pause/resume, safe stop, autostart, update checks, global/personal stats and hardware detection are exposed in the tray UI.
+- Public dashboard has been redesigned for responsive production use and contains no analytics or third-party frontend dependencies.
+- MIT license, privacy policy, security policy, contributor guide and GitHub templates are present.
+- Legacy PowerShell volunteer installer/uninstaller has been removed.
 
-## Standalone Windows release candidate
-- `EnigmaGrid.exe`: tray/control UI.
-- `EnigmaGridWorker.exe`: headless compute worker.
-- `EnigmaGridUpdater.exe`: signed update/apply/rollback helper.
-- `EnigmaGridSetup.exe`: single-file per-user installer; no Python or administrator rights required.
-- Setup installs under `%LOCALAPPDATA%`, registers HKCU autostart and Windows uninstall metadata.
-- Installer verifies embedded payload SHA-256 before copying any runtime executable.
-- Installer lifecycle test covers install, binary hash equality, registry/autostart, purge-data uninstall and removal of the install directory: PASS.
-- The old PowerShell volunteer installer/uninstaller has been removed from the public source path.
+## Validation completed
+- Source compile and JavaScript syntax checks: PASS.
+- Consensus and quarantine suites: PASS.
+- Security suite: PASS.
+- HTTP integration suite: PASS.
+- Public-surface exposure test: PASS.
+- Frozen real solver validation: PASS (`done=1`, `submissions=2`, `credits=2`).
+- Installer lifecycle: PASS, including payload hash equality, registry/autostart, purge uninstall, install-directory removal and temporary helper cleanup.
+- Signed frozen update: PASS.
+- Deliberately broken update rollback: PASS (`rollback_rc=4`).
+- `pip-audit`: no known dependency vulnerabilities.
+- Bandit: 0 medium / 0 high findings.
+- Microsoft Defender: no threats detected in Setup or runtime directory.
+- Repository secret/private-address scan: no credentials, private user paths or real Tailscale device IPs detected.
 
-## Signed updates
-- Ed25519 release private key is outside Git and stored as an ACL-restricted DPAPI blob on Lenovo.
-- Frozen signed update success path: PASS.
-- Forced broken-version rollback (`9.9.9`): PASS, previous runtime restored automatically.
-- Mandatory-update refusal stops safely and is not restarted by the tray.
-- Update application happens only between leases.
+## Final local artifact hashes
+- Update ZIP: 121,971,445 bytes; SHA-256 `C3C359E2C9252401163E7E5379E2A7964EDBA2ECA4C9DA50302188AC7CE091DE`.
+- Setup EXE: 132,311,135 bytes; SHA-256 `B610B60C52C08E6A4E41CFBB43A628E3CF7A484C8C5AB8983F7CBB38C68762DE`.
 
-## Current binary hashes
-- Update ZIP: 111,965,838 bytes; SHA-256 `94AF531A56BE3BF7138F8533A43C9836D0125A940C7F3DDCEF96BCB6EA0883DC`.
-- Setup EXE: 122,329,812 bytes; SHA-256 `8C89D4965497F5EC72E3EA8A61854E13C25E7796A1CBEB4EB02D8AF8ADA1910E`.
+## External launch gate
+Tailscale itself reports that Funnel is not enabled for the tailnet and requires account approval. The coordinator remains non-public until that action is completed. After approval, Funnel should proxy only the loopback coordinator on port 8765 and the public surface must be rechecked before registration is opened.
 
-## Remaining before public launch
-- Configure and verify Tailscale Funnel/HTTPS. The Lenovo public IP must never be used as the volunteer endpoint.
-- Add release bootstrap so Setup/tray receives the Funnel URL automatically; volunteers should not type a server address.
-- Run final secret/IP scan and security regression from a clean checkout.
-- Finalize public privacy/contributor terms and repository-facing documentation.
-- Create GitHub repository only after the items above pass.
-
-## Known minor issue
-During uninstall, a temporary copy of `EnigmaGridUpdater.exe` can remain briefly in `%TEMP%` because the PyInstaller bootloader may keep its own executable locked. It contains no credentials/user data and is removed by the next Setup run or normal temporary-file cleanup. Installed runtime, autostart, uninstall registry entry and optional local data are removed correctly.
+## Known release caveat
+`EnigmaGridSetup.exe` is currently `NotSigned` under Windows Authenticode because the project has no paid code-signing certificate. Early downloads may trigger a SmartScreen/Unknown Publisher warning. GitHub artifact attestation, published SHA-256 hashes and the project's Ed25519-signed update chain remain available as integrity/provenance controls.

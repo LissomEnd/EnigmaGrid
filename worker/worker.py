@@ -55,7 +55,7 @@ def validate_server_url(server):
 def get_json(server,path,timeout=30):
     validate_server_url(server)
     req=urllib.request.Request(server.rstrip("/")+path,headers={"User-Agent":"EnigmaVolunteerGrid/"+VERSION})
-    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())
+    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())  # nosec B310 - validate_server_url above
 
 def post(server,path,obj,token=None,timeout=30):
     validate_server_url(server)
@@ -63,7 +63,7 @@ def post(server,path,obj,token=None,timeout=30):
     headers={"Content-Type":"application/json"}
     if token:headers["X-Device-Token"]=token
     req=urllib.request.Request(server.rstrip("/")+path,data=data,headers=headers)
-    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())
+    with urllib.request.urlopen(req,timeout=timeout) as f:return json.loads(f.read())  # nosec B310 - validate_server_url above
 
 def detect_nvidia():
     try:
@@ -214,6 +214,23 @@ def heartbeat_loop(stop,state,runtime):
         try:heartbeat_once(state,runtime)
         except Exception:pass
 
+def client_summary(state_path):
+    state=load_state(Path(state_path))
+    hw=hardware()
+    base={"registered":bool(state),"hardware":{"cpu_count":hw.get("cpu_count",1),
+          "capabilities":hw.get("capabilities",[]),"gpus":hw.get("gpus",[])},
+          "worker_version":VERSION}
+    if not state:return base
+    base["server"]=state.get("server","")
+    base["settings"]=normalize_settings(state.get("settings",{}))
+    try:base["global"]=get_json(state["server"],"/api/public/status",10)
+    except Exception as e:base["global_error"]=type(e).__name__
+    token=state.get("dashboard_token","")
+    if token:
+        try:base["personal"]=post(state["server"],"/api/me",{"dashboard_token":token},timeout=10)
+        except Exception as e:base["personal_error"]=type(e).__name__
+    return base
+
 def run_demo(lease):
     cfg=lease.get("config",{});rounds=int(cfg.get("hash_rounds",2000));best=None
     for unit in range(int(lease["start_unit"]),int(lease["end_unit"])):
@@ -343,6 +360,7 @@ def main():
     ap.add_argument("--private-credit",action="store_true");ap.add_argument("--state",default=str(Path.home()/".enigma-volunteer"/"client.json"))
     ap.add_argument("--show-secrets",action="store_true")
     ap.add_argument("--self-test",action="store_true")
+    ap.add_argument("--client-summary-json",action="store_true")
     ap.add_argument("--once",action="store_true");ap.add_argument("--disable",action="store_true")
     ap.add_argument("--register-only",action="store_true")
     ap.add_argument("--set-preferences",action="store_true");ap.add_argument("--cpu-percent",type=int,default=50)
@@ -351,7 +369,12 @@ def main():
     if args.self_test:
         h=hardware();assert "cpu_count" in h
         import numpy, numba
-        print(json.dumps({"ok":True,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__}))
+        print(json.dumps({"ok":True,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__,
+                          "cpu_count":h.get("cpu_count",1),"capabilities":h.get("capabilities",[]),
+                          "gpus":h.get("gpus",[])}))
+        return
+    if args.client_summary_json:
+        print(json.dumps(client_summary(args.state),ensure_ascii=False))
         return
     state_path=Path(args.state);state=load_state(state_path)
     if state is None:

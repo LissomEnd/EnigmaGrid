@@ -66,7 +66,7 @@ def main():
     if not kb:
         print("FROZEN_UPDATE_LOCAL_SKIPPED no ENIGMA_TEST_SIGNING_KEY_BLOB");return
     key_blob=Path(kb)
-    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe"]
+    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"]
     assert ASSET.exists() and key_blob.exists()
     assert all((CAND/x).exists() for x in required)
 

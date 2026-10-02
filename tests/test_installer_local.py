@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -30,18 +31,21 @@ def wait_gone(path,timeout=12):
         time.sleep(.3)
     return False
 
-def wait_no_cleanup_helpers(timeout=12):
+def wait_no_cleanup_helpers(timeout=20):
     end=time.time()+timeout;temp=Path(tempfile.gettempdir())
     while time.time()<end:
-        if not list(temp.glob("EnigmaGridCleanup-*.exe")):return True
+        if not list(temp.glob("EnigmaGridCleanup-*.exe")) and not list(temp.glob("EnigmaGridCleanup-*.cmd")):return True
         time.sleep(.3)
     return False
 
 def main():
     assert SETUP.exists()
-    for p in Path(tempfile.gettempdir()).glob("EnigmaGridCleanup-*.exe"):
-        try:p.unlink()
-        except Exception:pass
+    pre=subprocess.run([str(SETUP),"--self-test"],timeout=120)
+    assert pre.returncode==0,pre.returncode
+    for pattern in ("EnigmaGridCleanup-*.exe","EnigmaGridCleanup-*.cmd"):
+        for p in Path(tempfile.gettempdir()).glob(pattern):
+            try:p.unlink()
+            except Exception:pass
     tmp=Path(tempfile.mkdtemp(prefix="enigma-installer-test-"))
     install=tmp/"install";data=tmp/"data"
     app_id="EnigmaVolunteerGridTest_"+str(os.getpid())
@@ -49,13 +53,15 @@ def main():
          "--install-dir",str(install),"--data-dir",str(data),"--app-id",app_id]
     r=subprocess.run(cmd,timeout=180)
     assert r.returncode==0,r.returncode
-    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","EnigmaGridSetup.exe"]
+    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","EnigmaGridSetup.exe"]
     assert all((install/x).exists() for x in required)
 
-    for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe"):
+    for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"):
         a=hashlib.sha256((install/name).read_bytes()).hexdigest()
         b=hashlib.sha256((CAND/name).read_bytes()).hexdigest()
         assert a==b,name
+    release=json.loads((install/"release_config.json").read_text(encoding="utf-8"))
+    assert str(release["server_url"]).startswith("https://")
     assert reg_value(RUN_KEY,app_id)==f'"{install/"EnigmaGrid.exe"}"'
     u=UNINSTALL_BASE+"\\"+app_id
     assert exists_key(u)
@@ -74,9 +80,8 @@ def main():
     except OSError:pass
     assert wait_gone(data),data
     assert wait_gone(install),install
-    # PyInstaller may keep the temporary cleanup runner locked briefly after uninstall.
-    # It contains no credentials and is removed by the next setup run / normal temp cleanup.
+    assert wait_no_cleanup_helpers(),"temporary cleanup helper remained"
     shutil.rmtree(tmp,ignore_errors=True)
-    print("INSTALLER_E2E_OK",{"install":True,"registry":True,"uninstall":True})
+    print("INSTALLER_E2E_OK",{"install":True,"registry":True,"uninstall":True,"temp_cleanup":True})
 
 if __name__=="__main__":main()

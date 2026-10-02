@@ -1,6 +1,7 @@
-import base64
+﻿import base64
 import ctypes
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -25,9 +26,21 @@ def version_tuple(v):
     if not m:return (0,0,0)
     return tuple(int(x or 0) for x in m.groups())
 
+def safe_fetch_url(url):
+    u=urlparse(url)
+    if u.scheme=="https" and u.hostname:return True
+    if u.scheme!="http" or not u.hostname:return False
+    host=u.hostname.lower()
+    if host=="localhost":return True
+    try:
+        ip=ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:return False
+
 def fetch_bytes(url,timeout=30):
+    if not safe_fetch_url(url):raise ValueError("unsafe_update_url")
     req=urllib.request.Request(url,headers={"User-Agent":"EnigmaVolunteerGrid-Updater/1"})
-    with urllib.request.urlopen(req,timeout=timeout) as r:
+    with urllib.request.urlopen(req,timeout=timeout) as r:  # nosec B310
         return r.read()
 
 def fetch_json(url,timeout=30):
@@ -183,7 +196,7 @@ class UpdateManager:
         tmp=target_dir/(name+".part");final=target_dir/name
         req=urllib.request.Request(url,headers={"User-Agent":"EnigmaVolunteerGrid-Updater/1"})
         h=hashlib.sha256();size=0
-        with urllib.request.urlopen(req,timeout=60) as r,open(tmp,"wb") as f:
+        with urllib.request.urlopen(req,timeout=60) as r,open(tmp,"wb") as f:  # nosec B310
             while True:
                 block=r.read(1024*1024)
                 if not block:break

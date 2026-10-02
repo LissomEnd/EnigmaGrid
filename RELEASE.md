@@ -2,25 +2,31 @@
 
 Release updates use two independent trust layers: GitHub build provenance and the project Ed25519 release signature.
 
-## Normal release
-1. Run CI and the Build release candidate workflow from the intended commit.
-2. Download enigma-volunteer-windows.zip and verify its GitHub artifact attestation.
-3. Create update-manifest.json locally with scripts/create_update_manifest.py, specifying the final OWNER/REPOSITORY, semantic version and release notes.
-4. Sign the exact manifest on Lenovo with scripts/sign_update_manifest_dpapi.py. The signer decrypts the private key only in memory from the ACL-restricted DPAPI blob.
-5. Verify update-manifest.sig using the public key embedded in the worker before publication.
-6. Create the GitHub Release and upload exactly three update assets: enigma-volunteer-windows.zip, update-manifest.json, and update-manifest.sig.
-7. After the release is fully visible, set github_repo in the Lenovo server config. Clients learn it through /api/public/config.
+## First public release
+1. Create the GitHub repository from the final local commit.
+2. Replace the repository placeholder in the live coordinator config with the final `OWNER/REPOSITORY`.
+3. Run CI and the Windows release-candidate workflow from that exact commit.
+4. Verify GitHub artifact attestations for both `EnigmaGridSetup.exe` and the Windows update ZIP.
+5. Create and locally sign `update-manifest.json` for the exact update ZIP.
+6. Publish a GitHub Release containing `EnigmaGridSetup.exe`, the Windows update ZIP, `update-manifest.json`, and `update-manifest.sig`.
+7. Keep registration closed until the release assets and public HTTPS endpoint have both been independently verified.
+8. Enable Tailscale Funnel only to the loopback coordinator on port 8765, re-run public-surface checks, then open public registration.
 
-## Mandatory security release
-Set mandatory=true in the signed manifest. If old clients must stop receiving work, publish and verify the release first, then raise min_worker_version on the coordinator.
+## Normal update release
+1. Run CI and the release-candidate workflow from the intended commit.
+2. Download the update ZIP and verify its GitHub artifact attestation.
+3. Create `update-manifest.json` locally with `scripts/create_update_manifest.py`, specifying the final repository, semantic version and release notes.
+4. Sign the exact manifest on the trusted signing machine with `scripts/sign_update_manifest_dpapi.py`.
+5. Verify `update-manifest.sig` using the public key embedded in the worker.
+6. Upload the update ZIP, manifest and signature to the GitHub Release.
+7. Only after the release is fully visible may `min_worker_version` be raised for a mandatory update.
 
-An old worker then receives no new lease and immediately checks for an update. Accepting downloads the signed update in the background; installation occurs between leases. Refusing a mandatory update finishes current work and closes safely.
-
-Never raise min_worker_version before the signed release assets are publicly available.
+Mandatory updates are downloaded in the background and applied only between leases. Refusal finishes current work and closes safely. A failed post-update health check restores the previous frozen runtime automatically.
 
 ## Key handling
-The private Ed25519 release key is stored outside the repository in an ACL-restricted DPAPI CurrentUser blob on Lenovo. Signing decrypts it in memory; no plaintext PEM is written during normal signing.
+The private Ed25519 release key must remain outside the repository. Normal signing decrypts it only in memory from the protected local vault; no plaintext PEM is written during normal signing.
 
-This protects against accidental repository/CI disclosure and offline theft of the blob. It does not provide full separation from a compromise that already executes as the Lenovo signing user. Before a large public rollout, prefer a separate signing identity or offline/removable signing device if practical.
+Never put the private key, decrypted PEM, protected key blob, device/dashboard tokens, state databases, private IP addresses, or coordinator backups in GitHub, CI secrets, releases, issues, chat, or the public project directory.
 
-Never put the private key, decrypted PEM, or DPAPI blob in GitHub, CI secrets, releases, chat, email, or the public project directory.
+## Windows code signing
+The current Setup is not Authenticode-signed. If the project later obtains a trusted code-signing certificate, sign the final immutable EXE after the reproducible build and before publishing its final SHA-256. Do not replace the project's Ed25519 update-signature system with Authenticode; they protect different parts of the release chain.

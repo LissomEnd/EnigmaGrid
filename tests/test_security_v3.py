@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT=Path(__file__).resolve().parents[1]
 TMP=ROOT/"state_security_v3_test"
@@ -106,5 +108,15 @@ if os.name=="nt":
     assert json.loads(raw_state).get("_format")=="dpapi-v1"
     assert "DPAPI-SECRET" not in raw_state and "DASH-SECRET" not in raw_state
 
-print("SECURITY_V3_OK",{"pow_counter":counter,"sanitized_meta":meta})
+release_cfg=json.loads((ROOT/"worker"/"release_config.json").read_text(encoding="utf-8"))
+release_url=urlparse(str(release_cfg["server_url"]))
+assert release_url.scheme=="https" and release_url.hostname
+assert not release_url.username and not release_url.password and not release_url.query and not release_url.fragment
+try:
+    ipaddress.ip_address(release_url.hostname)
+    raise AssertionError("public bootstrap must not expose a direct IP address")
+except ValueError:
+    pass
+
+print("SECURITY_V3_OK",{"pow_counter":counter,"sanitized_meta":meta,"release_host":release_url.hostname})
 con.close();shutil.rmtree(TMP)

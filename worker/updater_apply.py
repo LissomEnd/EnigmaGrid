@@ -14,7 +14,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-FROZEN_FILES={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","SHA256SUMS.txt"}
+FROZEN_FILES={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","SHA256SUMS.txt"}
 
 def wait_parent(pid,timeout=120):
     if os.name=="nt":
@@ -78,9 +78,12 @@ def safe_extract(asset,dest):
             if total>max_total:raise ValueError("archive_uncompressed_too_large")
         z.extractall(dest)
     if frozen:
-        required={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe"}
+        required={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"}
         if not required.issubset({p.name for p in dest.iterdir() if p.is_file()}):
             raise ValueError("frozen_update_missing_required_files")
+        cfg=json.loads((dest/"release_config.json").read_text(encoding="utf-8"))
+        if not str(cfg.get("server_url","")).startswith("https://"):
+            raise ValueError("invalid_release_server_url")
         return "frozen"
     return "source"
 
@@ -148,10 +151,19 @@ def rollback_frozen(root,backup,names):
 
 def schedule_self_delete():
     if os.name!="nt" or not getattr(sys,"frozen",False):return
+    import tempfile,secrets
     env=os.environ.copy();env["EG_SELF_DELETE"]=str(Path(sys.executable).resolve())
-    command='ping 127.0.0.1 -n 8 >nul & del /f /q "%EG_SELF_DELETE%" 2>nul'
-    flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
-    subprocess.Popen(["cmd.exe","/d","/v:off","/c",command],
+    batch=Path(tempfile.gettempdir())/("EnigmaGridCleanup-"+secrets.token_hex(8)+".cmd")
+    batch.write_text("@echo off\r\n"
+        "for /L %%i in (1,1,30) do (\r\n"
+        "  del /f /q \"%EG_SELF_DELETE%\" 2>nul\r\n"
+        "  if not exist \"%EG_SELF_DELETE%\" goto done\r\n"
+        "  ping 127.0.0.1 -n 2 >nul\r\n"
+        ")\r\n"
+        ":done\r\n"
+        "del /f /q \"%~f0\"\r\n",encoding="ascii")
+    flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+    subprocess.Popen(["cmd.exe","/d","/v:off","/c",str(batch)],
                      env=env,creationflags=flags,close_fds=True)
 
 def cleanup_install(path,wait_pid=0,timeout=45):
@@ -203,7 +215,7 @@ def main():
     if kind=="frozen":stop_tray_for_update(state)
     try:
         if kind=="frozen":
-            names=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe"]
+            names=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"]
             for name in names:
                 cur=root/name
                 if cur.exists():replace_with_retry(cur,backup/name,15)
@@ -240,7 +252,7 @@ def main():
         shutil.rmtree(backup,ignore_errors=True)
     except Exception:
         if kind=="frozen":
-            try:rollback_frozen(root,backup,["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe"])
+            try:rollback_frozen(root,backup,["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"])
             except Exception:pass
         raise
 
