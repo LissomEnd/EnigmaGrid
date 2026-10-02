@@ -1,4 +1,5 @@
 import argparse
+import base64
 import ctypes
 import hashlib
 import ipaddress
@@ -107,10 +108,43 @@ def meta(runtime=None):
         x["cpu_threads_effective"]=runtime.get("cpu_threads",0)
     return x
 
-def load_state(path):return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+def _dpapi(data,protect=True):
+    if os.name!="nt":return data
+    class BLOB(ctypes.Structure):
+        _fields_=[("cbData",ctypes.c_ulong),("pbData",ctypes.POINTER(ctypes.c_ubyte))]
+    raw=(ctypes.c_ubyte*len(data)).from_buffer_copy(data)
+    src=BLOB(len(data),ctypes.cast(raw,ctypes.POINTER(ctypes.c_ubyte)));dst=BLOB()
+    fn=ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+    args=(ctypes.byref(src),None,None,None,None,0x1,ctypes.byref(dst)) if protect else (ctypes.byref(src),None,None,None,None,0x1,ctypes.byref(dst))
+    if not fn(*args):raise ctypes.WinError()
+    try:return ctypes.string_at(dst.pbData,dst.cbData)
+    finally:ctypes.windll.kernel32.LocalFree(dst.pbData)
+
+def load_state(path):
+    if not path.exists():return None
+    obj=json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(obj,dict) and obj.get("_format")=="dpapi-v1":
+        raw=base64.b64decode(obj["blob"],validate=True)
+        return json.loads(_dpapi(raw,False).decode("utf-8"))
+    if os.name=="nt" and isinstance(obj,dict):
+        save_state(path,obj)
+    return obj
+
 def save_state(path,obj):
     path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".tmp")
-    tmp.write_text(json.dumps(obj,indent=2),encoding="utf-8");tmp.replace(path)
+    raw=json.dumps(obj,separators=(",",":"),ensure_ascii=False).encode("utf-8")
+    if os.name=="nt":
+        wrapped={"_format":"dpapi-v1","blob":base64.b64encode(_dpapi(raw,True)).decode("ascii")}
+        tmp.write_text(json.dumps(wrapped,separators=(",",":")),encoding="utf-8")
+    else:
+        tmp.write_text(json.dumps(obj,indent=2),encoding="utf-8")
+        try:os.chmod(tmp,0o600)
+        except Exception:pass
+    tmp.replace(path)
+
+def save_plain_json(path,obj):
+    path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".tmp")
+    tmp.write_text(json.dumps(obj,separators=(",",":")),encoding="utf-8");tmp.replace(path)
 
 def solve_registration_pow(server):
     c=get_json(server,"/api/register-challenge",30)
@@ -201,7 +235,7 @@ def work(args,state):
     state_path=Path(args.state)
     updater=UpdateManager(VERSION,state_path,state["server"]) if UpdateManager else None
     if updater:updater.start()
-    save_state(ROOT/".worker-health.json",{"version":VERSION,"started":time.time()})
+    save_plain_json(ROOT/".worker-health.json",{"version":VERSION,"started":time.time()})
     while True:
         try:
             if updater and updater.stop_requested:

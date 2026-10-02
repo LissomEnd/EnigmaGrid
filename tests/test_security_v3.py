@@ -24,6 +24,7 @@ sys.path.insert(0,str(ROOT/"worker"))
 import coordinator as c
 import updater
 import updater_apply
+import worker
 
 c.init_db()
 con=c.db()
@@ -95,6 +96,15 @@ subprocess.run([sys.executable,str(ROOT/"scripts"/"create_update_manifest.py"),s
 generated_obj=json.loads(generated.read_text(encoding="utf-8"))
 assert generated_obj["min_supported_version"]==""
 assert generated_obj["mandatory"] is False
+
+client_state=TMP/"client.json"
+secret_state={"server":"https://example.invalid","device_token":"DPAPI-SECRET","dashboard_token":"DASH-SECRET"}
+worker.save_state(client_state,secret_state)
+assert worker.load_state(client_state)==secret_state
+raw_state=client_state.read_text(encoding="utf-8")
+if os.name=="nt":
+    assert json.loads(raw_state).get("_format")=="dpapi-v1"
+    assert "DPAPI-SECRET" not in raw_state and "DASH-SECRET" not in raw_state
 
 print("SECURITY_V3_OK",{"pow_counter":counter,"sanitized_meta":meta})
 con.close();shutil.rmtree(TMP)
