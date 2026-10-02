@@ -24,13 +24,21 @@ jobs:
           Copy-Item dist/enigma-volunteer-windows-candidate.zip dist/enigma-volunteer-windows.zip
       - name: Test frozen worker and tray
         run: python tests/test_frozen_candidate.py
-      - name: Attest release candidate
+      - name: Test installer lifecycle
+        run: python tests/test_installer_local.py
+      - name: Attest worker update package
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/enigma-volunteer-windows.zip
+      - name: Attest Windows setup
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/EnigmaGridSetup.exe
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: enigma-volunteer-windows
-          path: dist/enigma-volunteer-windows.zip
+          path: |
+            dist/enigma-volunteer-windows.zip
+            dist/EnigmaGridSetup.exe
           if-no-files-found: error

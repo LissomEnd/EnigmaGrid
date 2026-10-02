@@ -1,61 +1,49 @@
 # Status — 2026-10-02
 
-## Main local service
-- LENOVO5 is running Enigma Volunteer Grid coordinator v0.2 on port 8765.
+## Current services
+- Lenovo runs Enigma Volunteer Grid coordinator v0.3 on `127.0.0.1:8765` only.
 - Global campaign `p1030680-global-v1` is `prepared`, not activated.
-- C3 remains a completely separate live system on port 8750.
+- C3 is a separate live campaign/service on port 8750 and is not modified by Grid development.
+- No GitHub remote exists and nothing has been published.
 
-## Implemented and tested
+## Distributed grid verified
 - Crash/power-loss lease recovery and exact-range requeue.
-- Duplicate late results receive no double credit.
-- Two independent contributors: first result pending, second matching result verifies both.
-- Real `event_stochastic` Enigma work reproduced server-side with identical fingerprint.
-- 2-of-3 majority logic tested; dissenting submission rejected and penalized.
-- Invalid result rejected before consensus with zero credit.
-- Trust/quarantine: severe invalid results 1 -> trust 0.65; 2 -> trust 0.30 + quarantined/disabled.
-- CUDA capability routing tested: CUDA device with GPU 40% got GPU work; non-CUDA device got none.
-- Surface worker v0.2.1 tested at CPU 30%: effective 2 logical threads of 8, GPU 0%.
-- Personal dashboard settings update is reflected by heartbeat.
-- Backup created and SQLite integrity check returned `ok`.
-- Installer parses cleanly and retains user-level HKCU autostart/uninstall design.
+- Duplicate late submissions do not receive duplicate credit.
+- 2-of-2 independent consensus; mismatch expands to 2-of-3; unresolved disagreement enters review.
+- Real `event_stochastic` result reproduction and independent verification.
+- Invalid submissions receive zero credit; repeated serious failures reduce trust and quarantine devices.
+- Capability routing for CPU/CUDA and per-device CPU/GPU percentages.
+- DPAPI client credential storage on Windows; server token hashes only.
+- Public metadata sanitization removes hostname, Python details and GPU UUID.
+- Loopback-only coordinator bind guard.
 
-## Deployment prepared
-- Dockerfile + Docker Compose.
-- Caddy reverse proxy with HTTPS/security headers.
-- Coordinator container drops Linux capabilities, uses no-new-privileges and read-only root filesystem.
-- Secrets live in ignored `.env` / production config, not Git.
-- Backup/restore scripts and migration guide are present.
+## Standalone Windows release candidate
+- `EnigmaGrid.exe`: tray/control UI.
+- `EnigmaGridWorker.exe`: headless compute worker.
+- `EnigmaGridUpdater.exe`: signed update/apply/rollback helper.
+- `EnigmaGridSetup.exe`: single-file per-user installer; no Python or administrator rights required.
+- Setup installs under `%LOCALAPPDATA%`, registers HKCU autostart and Windows uninstall metadata.
+- Installer verifies embedded payload SHA-256 before copying any runtime executable.
+- Installer lifecycle test covers install, binary hash equality, registry/autostart, purge-data uninstall and removal of the install directory: PASS.
+- The old PowerShell volunteer installer/uninstaller has been removed from the public source path.
 
-## Current limitations before public launch
-- Docker is not installed on Lenovo, so the container stack is prepared but not executed locally.
-- No VPS/domain has been provided yet; Lenovo therefore remains the central development server.
-- GPU scheduling is implemented, but the production P1030680 manifest currently uses CPU engines only.
-- Worker still depends on Python 3.13; standalone signed Windows packaging/tray UI remains to be built.
-- PostgreSQL/failover is a future scale step, not required for the current local coordinator.
+## Signed updates
+- Ed25519 release private key is outside Git and stored as an ACL-restricted DPAPI blob on Lenovo.
+- Frozen signed update success path: PASS.
+- Forced broken-version rollback (`9.9.9`): PASS, previous runtime restored automatically.
+- Mandatory-update refusal stops safely and is not restarted by the tray.
+- Update application happens only between leases.
 
-## Publication
-No GitHub remote exists and nothing has been published.
+## Current binary hashes
+- Update ZIP: 111,965,838 bytes; SHA-256 `94AF531A56BE3BF7138F8533A43C9836D0125A940C7F3DDCEF96BCB6EA0883DC`.
+- Setup EXE: 122,329,812 bytes; SHA-256 `8C89D4965497F5EC72E3EA8A61854E13C25E7796A1CBEB4EB02D8AF8ADA1910E`.
 
-## Final hygiene checks
-- Main coordinator DB was cleaned after testing: only `p1030680-global-v1` remains and it is `prepared`; test identities/results were removed after backup.
-- Clean volunteer source bundle: `dist/enigma-volunteer-dev.zip`, 1,230,263 bytes.
-- Bundle SHA-256: `D9327541AFB8134500501E610320AD9452F989596C5282FA4C15CD55A6614DBD`.
-- Bundle contains 14 files and zero `__pycache__`, `.pyc`, `.nbc` or `.nbi` artifacts.
+## Remaining before public launch
+- Configure and verify Tailscale Funnel/HTTPS. The Lenovo public IP must never be used as the volunteer endpoint.
+- Add release bootstrap so Setup/tray receives the Funnel URL automatically; volunteers should not type a server address.
+- Run final secret/IP scan and security regression from a clean checkout.
+- Finalize public privacy/contributor terms and repository-facing documentation.
+- Create GitHub repository only after the items above pass.
 
-## Standalone Windows candidate — 2026-10-02
-- PyInstaller build now produces `EnigmaGrid.exe` (tray/control UI) and `EnigmaGridWorker.exe` (headless worker) with no Python prerequisite for volunteers.
-- Frozen candidate was tested end-to-end against an isolated coordinator using a real tiny `event_stochastic` job, independent validation, DPAPI state and final credit: PASS.
-- Tray executable self-test: PASS.
-- Current candidate ZIP SHA-256: `863DB06FF6997D608B901838A5CD86E4903AB6784271A40914BB14DC2E4D44E2`.
-- Candidate archive contains only the two executables and SHA256SUMS; the legacy Python uninstaller was intentionally removed.
-- IMPORTANT: frozen auto-update download/verification code is present, but replacement/restart of the standalone executable has not yet passed an end-to-end update test. Do not publish this candidate as the final public release until that path is completed.
-
-## Frozen auto-update — 2026-10-02
-- Standalone package now includes a separate `EnigmaGridUpdater.exe` helper.
-- The worker copies the updater helper to the user state directory before applying an update, so the installed updater can safely replace itself.
-- Tray exits gracefully through an `update-exit` marker; computation is already at a safe point before replacement.
-- Signed frozen update success path tested end-to-end with the real Ed25519 DPAPI signing key: PASS.
-- Forced post-swap version mismatch (`9.9.9`) tested rollback: previous executables restored and old worker restarted, updater exit code 4 as designed: PASS.
-- Mandatory-update refusal no longer causes the tray to restart the stopped worker.
-- Current three-executable candidate ZIP SHA-256: `0CC82E031E80450C57FD9B59620E951A5D3F7BCE79034518BFDBBD18FE388FE0`.
-- A user-friendly install/autostart/uninstall flow remains the next standalone milestone.
+## Known minor issue
+During uninstall, a temporary copy of `EnigmaGridUpdater.exe` can remain briefly in `%TEMP%` because the PyInstaller bootloader may keep its own executable locked. It contains no credentials/user data and is removed by the next Setup run or normal temporary-file cleanup. Installed runtime, autostart, uninstall registry entry and optional local data are removed correctly.

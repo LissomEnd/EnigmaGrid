@@ -34,6 +34,21 @@ $hashes | ForEach-Object {"$($_.Hash)  $([IO.Path]::GetFileName($_.Path))"} | Se
 $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$out\*" -DestinationPath $zip -CompressionLevel Optimal
+
+& $py "$root\scripts\create_installer_payload.py" $out "0.3.0"
+if($LASTEXITCODE -ne 0){throw "Installer payload manifest failed"}
+$setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
+  "--name","EnigmaGridSetup","--distpath","$root\dist","--workpath","$work\setup","--specpath",$spec,
+  "--add-data","$out\installer_payload.json;.",
+  "--add-binary","$out\EnigmaGrid.exe;payload",
+  "--add-binary","$out\EnigmaGridWorker.exe;payload",
+  "--add-binary","$out\EnigmaGridUpdater.exe;payload",
+  "$root\worker\installer.py")
+& $py @setup
+if($LASTEXITCODE -ne 0){throw "Setup build failed"}
+Remove-Item "$out\installer_payload.json" -Force
+
 Write-Host "Built candidate:"
 Get-ChildItem $out -File | Select-Object Name,Length | Format-Table -AutoSize
 Get-FileHash $zip -Algorithm SHA256 | Format-List
+Get-FileHash "$root\dist\EnigmaGridSetup.exe" -Algorithm SHA256 | Format-List

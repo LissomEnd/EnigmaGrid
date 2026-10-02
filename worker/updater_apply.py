@@ -146,17 +146,43 @@ def rollback_frozen(root,backup,names):
         except Exception:pass
         if old.exists():replace_with_retry(old,cur,10)
 
+def schedule_self_delete():
+    if os.name!="nt" or not getattr(sys,"frozen",False):return
+    env=os.environ.copy();env["EG_SELF_DELETE"]=str(Path(sys.executable).resolve())
+    command='ping 127.0.0.1 -n 8 >nul & del /f /q "%EG_SELF_DELETE%" 2>nul'
+    flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
+    subprocess.Popen(["cmd.exe","/d","/v:off","/c",command],
+                     env=env,creationflags=flags,close_fds=True)
+
+def cleanup_install(path,wait_pid=0,timeout=45):
+    target=Path(path).resolve()
+    if wait_pid:wait_parent(wait_pid,timeout=120)
+    end=time.time()+timeout;last=None
+    while time.time()<end:
+        try:
+            if target.exists():shutil.rmtree(target)
+            schedule_self_delete();return 0
+        except Exception as e:
+            last=e;time.sleep(.5)
+    if last:raise last
+    return 0
+
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument("--parent-pid",type=int,required=True)
-    ap.add_argument("--install-root",required=True)
-    ap.add_argument("--state",required=True)
-    ap.add_argument("--server",required=True)
-    ap.add_argument("--asset",required=True)
-    ap.add_argument("--manifest",required=True)
-    ap.add_argument("--signature",required=True)
+    ap.add_argument("--cleanup-install",default="")
+    ap.add_argument("--wait-pid",type=int,default=0)
+    ap.add_argument("--parent-pid",type=int)
+    ap.add_argument("--install-root",default="")
+    ap.add_argument("--state",default="")
+    ap.add_argument("--server",default="")
+    ap.add_argument("--asset",default="")
+    ap.add_argument("--manifest",default="")
+    ap.add_argument("--signature",default="")
     ap.add_argument("--health-timeout",type=int,default=45)
     a=ap.parse_args()
+    if a.cleanup_install:return cleanup_install(a.cleanup_install,a.wait_pid)
+    required=[a.parent_pid,a.install_root,a.state,a.server,a.asset,a.manifest,a.signature]
+    if any(x in (None,"") for x in required):ap.error("missing update arguments")
     root=Path(a.install_root).resolve();state=Path(a.state).resolve()
 
     manifest=verify(a.manifest,a.signature,public_key_path(root),a.asset)
