@@ -1,41 +1,24 @@
-# Status — 2026-10-02
+# Release validation status — 2026-10-03
 
-## Local release candidate
-- Coordinator v0.3 remains bound to `127.0.0.1:8765` on Lenovo.
-- Windows client version: `0.3.0`.
-- Global campaign `p1030680-global-v1` remains `prepared`, not activated.
-- No GitHub remote exists and nothing has been published.
-- Public bootstrap hostname is embedded in `worker/release_config.json`; no private coordinator IP is shipped.
+The 0.4.0 candidate includes real CPU and OpenCL search, a Windows x64 installer, resource controls, a tray application, a public dashboard and signed updates.
 
-## Product state
-- Branded Windows Setup, tray application, worker and updater are built as standalone executables.
-- First-run onboarding no longer asks volunteers for a server URL.
-- CPU/GPU percentages, pause/resume, safe stop, autostart, update checks, global/personal stats and hardware detection are exposed in the tray UI.
-- Public dashboard has been redesigned for responsive production use and contains no analytics or third-party frontend dependencies.
-- MIT license, privacy policy, security policy, contributor guide and GitHub templates are present.
-- Legacy PowerShell volunteer installer/uninstaller has been removed.
+## Verified locally
 
-## Validation completed
-- Source compile and JavaScript syntax checks: PASS.
-- Consensus and quarantine suites: PASS.
-- Security suite: PASS.
-- HTTP integration suite: PASS.
-- Public-surface exposure test: PASS.
-- Frozen real solver validation: PASS (`done=1`, `submissions=2`, `credits=2`).
-- Installer lifecycle: PASS, including payload hash equality, registry/autostart, purge uninstall, install-directory removal and temporary helper cleanup.
-- Signed frozen update: PASS.
-- Deliberately broken update rollback: PASS (`rollback_rc=4`).
-- `pip-audit`: no known dependency vulnerabilities.
-- Bandit: 0 medium / 0 high findings.
-- Microsoft Defender: no threats detected in Setup or runtime directory.
-- Repository secret/private-address scan: no credentials, private user paths or real Tailscale device IPs detected.
+- Source security, HTTP integration, public-surface, consensus and quarantine tests pass.
+- Native-array input bounds, coordinator redirect rejection, shared-proxy rate limits and safe uninstall path tests pass.
+- Resource routing, pause checkpoints and safe-stop completion tests pass.
+- CPU/OpenCL parity passes on AMD integrated graphics and Intel Iris Plus.
+- The installed Windows client completed matching CPU+GPU and CPU work on both Lenovo and Surface, with independent contribution credit.
+- Installer lifecycle, payload hashes, registry cleanup and uninstall pass.
+- A signed update succeeds; an intentionally mismatched version triggers rollback.
+- A pattern scan of the pre-release Git history and working tree found no matching credential or private-address patterns. This is not a guarantee against every possible secret.
 
-## Final local artifact hashes
-- Update ZIP: 121,971,445 bytes; SHA-256 `C3C359E2C9252401163E7E5379E2A7964EDBA2ECA4C9DA50302188AC7CE091DE`.
-- Setup EXE: 132,311,135 bytes; SHA-256 `B610B60C52C08E6A4E41CFBB43A628E3CF7A484C8C5AB8983F7CBB38C68762DE`.
+## Deployment and publication
 
-## External launch gate
-Tailscale itself reports that Funnel is not enabled for the tailnet and requires account approval. The coordinator remains non-public until that action is completed. After approval, Funnel should proxy only the loopback coordinator on port 8765 and the public surface must be rechecked before registration is opened.
+The coordinator is bound to loopback and exposed through Tailscale Funnel HTTPS. Version 0.4.0 responds on the configured endpoint. Registration remains closed while publication is being completed. The portable campaign manifest is prepared and has not yet been activated.
 
-## Known release caveat
-`EnigmaGridSetup.exe` is currently `NotSigned` under Windows Authenticode because the project has no paid code-signing certificate. Early downloads may trigger a SmartScreen/Unknown Publisher warning. GitHub artifact attestation, published SHA-256 hashes and the project's Ed25519-signed update chain remain available as integrity/provenance controls.
+This file records development evidence, not a claim that a release is published. Consult GitHub Releases for the exact published version, assets, hashes, provenance and known limitations. Candidate hashes are intentionally kept out of this document because rebuilds change them.
+
+## Limits
+
+The executables are not Authenticode-signed. NVIDIA OpenCL compatibility has not been tested on a physical device in this release audit. The official installer targets Windows x64. The search is heuristic and no confirmed historical decryption has been established. See README.md, SECURITY.md and THIRD_PARTY_NOTICES.md.

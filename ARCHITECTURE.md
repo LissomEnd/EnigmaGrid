@@ -1,33 +1,33 @@
-# Architecture v0.2
+# Architecture
 
-## Control plane
-Lenovo currently runs `server/coordinator.py` on port 8765. Public deployment is containerized and places Caddy in front of the coordinator; only Caddy exposes 80/443.
+## Coordinator and transport
 
-## Identity
-A contributor owns one or more devices. The contributor join key, dashboard token and per-device token are generated randomly and stored only as hashes on the server. Public leaderboard credit is opt-in.
+The Windows coordinator runs `server/coordinator.py` on loopback port 8765. Tailscale Funnel terminates public HTTPS and proxies only to that local service. Volunteers do not join the private tailnet. Docker/Caddy files are an alternative deployment template, not the current public deployment.
 
-## Resource policy
-Each device reports CPU count and GPU capabilities. Settings contain `cpu_percent`, `gpu_percent`, `allow_cpu` and `allow_gpu`. Segment configs declare `requires`, e.g. `['cpu']` or `['cuda']`. The scheduler leases only eligible work.
+The HTTP server bounds concurrent request handlers and request size. Global, registration and per-device rate limits apply; anonymous visitors share a separate budget because Funnel presents a loopback peer address. Forwarded IP headers are not trusted for authentication.
 
-CPU percentage maps to logical-core affinity and Numba thread count. GPU percentage is returned in the lease and enforced by worker duty-cycle between GPU jobs. This avoids changing global GPU power limits on the volunteer's machine.
+## Identity and privacy
 
-## Lease/failure model
-Work is `[start_unit,end_unit)` and deterministic. Heartbeats renew leases. A crashed primary lease expires and is requeued. Validation leases can simply expire because the pending validation itself remains schedulable.
+A contributor owns one or more devices. Random contributor, dashboard and device secrets are stored as hashes on the server. Windows client state uses DPAPI CurrentUser. The private browser dashboard keeps its token in memory and clears outstanding display requests when the user clears it. The desktop onboarding defaults to private credit.
 
-Late/duplicate work is safe: accepted unique ranges live in `done_ranges`; stale completions cannot receive duplicate credit.
+## Portable CPU and GPU search
 
-## Validation and anti-cheat
-Every submitted result first passes server validation. Demo jobs are recomputed exactly. Enigma event-stochastic candidates are checked for valid range/seed, key/event structure, 72-character plaintext, and server-side reproduction of plaintext and score.
+`portable_event_v1` runs deterministic trajectories in blocks of at most 256 keys. CPU and OpenCL implementations use the same integer scoring and mutation decisions. Each detected GPU must reproduce CPU scores for the supported event models before use. Final candidates are decrypted and scored again with the CPU reference path. A combined job divides scoring batches between CPU and GPU without changing the trajectory results.
 
-Valid first submissions remain pending. A different contributor must independently recompute the same range. Matching fingerprints verify the range and both contributors receive credit. A mismatch raises the target to a third replica; 2-of-3 matching results win. Three different results enter manual review.
+The CPU slider sets affinity/thread budget; the GPU slider sets a work/rest budget between scoring iterations. Zero disables assignment to that resource. GPU computation still requires host CPU coordination. These are scheduling controls, not exact instantaneous utilization guarantees. Changes apply to the next job. Pause blocks at search checkpoints; safe stop completes the current job and preserves the stop request across restarts.
 
-Verified devices gain trust slowly. Invalid server validation receives a severe penalty; consensus mismatch receives a smaller penalty. Repeated serious failures automatically quarantine and disable a device.
+The prepared public campaign uses three plugboard profiles and six operator-event hypotheses. Seed intervals do not overlap between profiles. Equal-priority segments are scheduled according to fraction assigned so each profile can make progress. None of these fractions represents probability of decryption or exhaustive keyspace coverage.
 
-## Data and migration
-SQLite WAL is used for the current single coordinator. DB/config locations are environment-overridable (`GRID_DATA_DIR`, `GRID_DB`, `GRID_CONFIG`). Backup uses SQLite's online backup API. Docker deployment mounts state as an external volume, so moving hosts is copy/restore rather than a protocol change.
+## Leases and validation
 
-## HTTPS
-The worker refuses plaintext HTTP to public addresses. Local/private/Tailscale HTTP is allowed for development. Production uses Caddy automatic HTTPS and a private HTTP hop from Caddy to the coordinator container.
+Work ranges are half-open `[start_unit, end_unit)`. Heartbeats renew leases; expired primary work is requeued. Duplicate or stale submissions cannot receive duplicate credit.
 
-## Scale path
-Workers/campaign manifests are storage-agnostic. When concurrency requires it, replace the coordinator storage implementation with PostgreSQL and add coordinator failover/object storage for archives without changing the worker lease protocol.
+Every submitted candidate passes type, range, key and event checks before native scoring. The coordinator reproduces its plaintext and score. A first valid submission remains pending until a different contributor submits a matching fingerprint. Disagreement requests a third replica; unresolved disagreement enters manual review. Repeated invalid work reduces trust and can quarantine a device.
+
+Redundant computation is not cryptographic proof of total effort or strong identity verification. Colluding accounts remain a limitation; registration challenges, rate limits and quarantine reduce abuse but do not establish that each account is a different person. A reproducible or high-scoring candidate is not proof of historical decryption.
+
+## Storage and updates
+
+SQLite WAL stores campaigns, leases, results and credit. Backups use SQLite's online backup API. State, private configuration and backups are excluded from Git and restricted by host ACLs. Account deletion removes personal records while retaining anonymous completed ranges.
+
+Updates require a manifest signed by the pinned Ed25519 release key plus matching file size and SHA-256. The updater verifies staging, waits for the worker to exit, applies at a job boundary and restores the prior runtime if the post-update check fails. The private signing key remains outside the repository.
