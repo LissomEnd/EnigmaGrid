@@ -46,23 +46,27 @@ def main():
         for p in Path(tempfile.gettempdir()).glob(pattern):
             try:p.unlink()
             except Exception:pass
-    tmp=Path(tempfile.mkdtemp(prefix="enigma-installer-test-"))
+    # Windows runners may expose TEMP through an 8.3 alias; the installer
+    # registers the resolved long path, so compare against that same path.
+    tmp=Path(tempfile.mkdtemp(prefix="enigma-installer-test-")).resolve()
     install=tmp/"install";data=tmp/"data"
     app_id="EnigmaVolunteerGridTest_"+str(os.getpid())
     cmd=[str(SETUP),"--quiet","--no-launch",
          "--install-dir",str(install),"--data-dir",str(data),"--app-id",app_id]
     r=subprocess.run(cmd,timeout=180)
     assert r.returncode==0,r.returncode
-    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","EnigmaGridSetup.exe"]
+    required=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","EnigmaGridSetup.exe","LICENSES.txt"]
     assert all((install/x).exists() for x in required)
 
-    for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"):
+    for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt"):
         a=hashlib.sha256((install/name).read_bytes()).hexdigest()
         b=hashlib.sha256((CAND/name).read_bytes()).hexdigest()
         assert a==b,name
     release=json.loads((install/"release_config.json").read_text(encoding="utf-8"))
     assert str(release["server_url"]).startswith("https://")
-    assert reg_value(RUN_KEY,app_id)==f'"{install/"EnigmaGrid.exe"}" --background'
+    actual=reg_value(RUN_KEY,app_id)
+    expected=f'"{install/"EnigmaGrid.exe"}" --background'
+    assert actual==expected,(actual,expected)
     u=UNINSTALL_BASE+"\\"+app_id
     assert exists_key(u)
     assert reg_value(u,"DisplayVersion")=="0.4.0"
