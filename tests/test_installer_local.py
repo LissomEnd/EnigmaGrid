@@ -1,4 +1,5 @@
 import hashlib
+import ast
 import json
 import os
 import shutil
@@ -10,6 +11,8 @@ import winreg
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
+VERSION=next(node.value.value for node in ast.parse((ROOT/'worker/installer.py').read_text()).body
+             if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in node.targets))
 SETUP=ROOT/"dist"/"EnigmaGridSetup.exe"
 CAND=ROOT/"dist"/"windows-candidate"
 RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -69,7 +72,7 @@ def main():
     assert actual==expected,(actual,expected)
     u=UNINSTALL_BASE+"\\"+app_id
     assert exists_key(u)
-    assert reg_value(u,"DisplayVersion")=="0.4.2"
+    assert reg_value(u,"DisplayVersion")==VERSION
     data.mkdir(parents=True,exist_ok=True)
     (data/"dummy-secret").write_text("test",encoding="utf-8")
 
