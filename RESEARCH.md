@@ -4,8 +4,9 @@ The existing exploratory campaign remains active while replacement methods are
 evaluated separately. Existing results and contribution records are preserved.
 No replacement campaign is qualified yet. Research qualification must not
 interrupt the current campaign before a tested replacement is ready to take over.
-Any replacement also requires the owner's explicit confirmation, even after
-technical qualification. No automatic switchover is authorized.
+The owner has authorized a replacement only after testing demonstrates a useful
+advantage and a safe, reversible transition is prepared. The running campaign
+continues until those conditions are met.
 
 Two separate research engines now support evaluation:
 
@@ -46,6 +47,12 @@ twelve blind trials on those historical prefixes with the same wall-time
 budget per method (one bounded batch can overshoot). The observed result was
 zero recoveries. This short benchmark cannot establish general ineffectiveness.
 
+An extended comparison at ten seconds per trial (six trials per heuristic,
+two historical prefixes) also yielded zero exact plaintext recoveries for both
+methods. Combined with the small target pilot, this does not demonstrate an
+advantage sufficient to replace the running campaign. Decision: keep v1 active;
+retain the new engine as a research prototype. No production transition occurred.
+
 `scripts/prepare_research_campaign.py --output proposal.json` prepares an inert
 proposal with attributed crib windows, legal offsets, explicit work bounds,
 scope sizing and activation gates. It neither reads nor changes the live
@@ -55,11 +62,12 @@ pairs if all canonical settings are explored. A full CPU-only sweep is not a
 practical allocation at measured prototype throughput; no such sweep is queued.
 The proposal includes a capped, deterministic CPU pilot: 112 jobs of 128 sampled
 mechanical cores each (14,336 core/hypothesis pairs). Job IDs and sampled cores
-are reproducible. It has not been executed on the target. This small pilot is
+are reproducible. An isolated target run on 2026-10-03 completed all 112 jobs
+in 94.29 seconds, with zero candidates and no budget cutoffs. This small pilot is
 for runtime and candidate-rate measurement; it cannot exclude the full domain.
 `search.crib_pilot` provides offline generation and execution, tested against a
 historical control. The proposal still requires overlap review against prior
-work, production integration and explicit user approval. It is not a replacement
+work, production integration and evidence supporting the conditional switch. It is not a replacement
 Windows release and cannot yet be assigned to existing volunteer clients.
 
 The current campaign's equal allocation across 0–3, 4–10 and 11–13 cables,
