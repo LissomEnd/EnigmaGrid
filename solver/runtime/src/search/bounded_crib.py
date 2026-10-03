@@ -6,9 +6,16 @@ Budgets yield UNKNOWN; receipts certify only the supplied domain and crib.
 from dataclasses import replace, asdict
 from hashlib import sha256
 import json
-from search.c3_models import Key, stream, solve_board, pair_strings, normalize, letters, step, core
+from search.c3_models import Key, stream, solve_board, pair_strings, normalize, letters, step, FW, BW
 
 VERSION = 'bounded_crib_v1'
+
+# Small fixed tables, independent of ciphertext and candidate keys. Each row
+# includes the contact offset on entering and leaving one rotor.
+SHIFTED_FORWARD={name:tuple(tuple((w[(x+o)%26]-o)%26 for x in range(26))
+    for o in range(26)) for name,w in FW.items()}
+SHIFTED_BACKWARD={name:tuple(tuple((w[(x+o)%26]-o)%26 for x in range(26))
+    for o in range(26)) for name,w in BW.items()}
 
 
 def crib_rows(key, offset, length):
@@ -18,11 +25,18 @@ def crib_rows(key, offset, length):
     permutations outside the crib. Full candidate replay remains independent.
     """
     p=list(letters(key.positions));rings=letters(key.rings)
+    names=(key.greek,)+key.moving_rotors
+    forward=[SHIFTED_FORWARD[name] for name in names]
+    backward=[SHIFTED_BACKWARD[name] for name in names]
+    reflector=FW[key.reflector]
     for _ in range(offset):step(p,key.moving_rotors)
     rows=[]
     for _ in range(length):
         step(p,key.moving_rotors)
-        rows.append(tuple(core(x,key,p,rings) for x in range(26)))
+        offsets=[(p[j]-rings[j])%26 for j in range(4)]
+        f0,f1,f2,f3=(forward[j][offsets[j]] for j in range(4))
+        b0,b1,b2,b3=(backward[j][offsets[j]] for j in range(4))
+        rows.append(tuple(b3[b2[b1[b0[reflector[f0[f1[f2[f3[x]]]]]]]]] for x in range(26)))
     return tuple(rows)
 
 def digest(value):

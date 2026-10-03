@@ -9,7 +9,8 @@ from search.bounded_crib import crib_rows,search
 rng=random.Random(11203)
 for i in range(60):
     letters=lambda: ''.join(rng.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ') for _ in range(4))
-    key=Key('Bthin','Gamma',('VI','II','VIII'),letters(),letters())
+    key=Key(rng.choice(('Bthin','Cthin')),rng.choice(('Beta','Gamma')),
+        tuple(rng.sample(('I','II','III','IV','V','VI','VII','VIII'),3)),letters(),letters())
     offset=rng.randrange(49)
     assert crib_rows(key,offset,24)==stream(key,72,include_plugs=False)[offset:offset+24]
 key=Key('Cthin','Beta',('VIII','VII','VI'),'AAZZ','AMMZ')
