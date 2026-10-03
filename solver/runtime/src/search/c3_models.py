@@ -140,13 +140,16 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
     for i,a,b in edges:
         if not 0<=i<len(rows) or not 0<=a<26 or not 0<=b<26:raise ValueError('Invalid edge')
     nodes=0;cutoff=False;answers=[];seen=set()
-    def extend(p,a,b):
-        # Every state here is an involution already within max_pairs, created
-        # from the empty board by assign. Reapplying an existing edge adds no
-        # cable and needs neither a copy nor another full-board count.
-        if p[a]==b:return p
-        return assign(p,a,b,max_pairs)
-    def search(p):
+    def extend(p,used,a,b):
+        # Internal states are involutions. Only a new non-self mapping adds a
+        # cable; carry its count rather than scanning all 26 endpoints again.
+        if p[a] not in (-1,b) or p[b] not in (-1,a):return None
+        if p[a]==b:return p,used
+        count=used+int(a!=b)
+        if count>max_pairs:return None
+        q=list(p);q[a]=b;q[b]=a
+        return tuple(q),count
+    def search(p,used):
         nonlocal nodes,cutoff
         if cutoff:return
         if nodes>=node_limit or len(answers)>=solution_limit:cutoff=True;return
@@ -157,12 +160,14 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
             changed=False
             for i,a,b in edges:
                 if p[a]!=-1:
-                    q=extend(p,b,rows[i][p[a]])
-                    if q is None:return
+                    extended=extend(p,used,b,rows[i][p[a]])
+                    if extended is None:return
+                    q,used=extended
                     changed|=q!=p;p=q
                 if p[b]!=-1:
-                    q=extend(p,a,rows[i][p[b]])
-                    if q is None:return
+                    extended=extend(p,used,a,rows[i][p[b]])
+                    if extended is None:return
+                    q,used=extended
                     changed|=q!=p;p=q
             if not changed:break
         unresolved=[e for e in edges if p[e[1]]==-1 or p[e[2]]==-1]
@@ -173,13 +178,13 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
         for i,a,b in unresolved:
             values=[]
             for x in range(26):
-                q=extend(p,a,x)
-                if q is not None:q=extend(q,b,rows[i][x])
+                q=extend(p,used,a,x)
+                if q is not None:q=extend(q[0],q[1],b,rows[i][x])
                 if q is not None:values.append(q)
             if not values:return
             if not options or len(values)<len(options):options=values
-        for q in options:search(q)
-    search(tuple([-1]*26))
+        for q,count in options:search(q,count)
+    search(tuple([-1]*26),0)
     return {'status':'unknown_budget' if cutoff else ('satisfiable' if answers else 'unsatisfiable'),'nodes':nodes,'partial_boards':[list(p) for p in answers],'full_key_search':False,'historical_solution':False}
 def exclusion_allowed(prior,request):
     axes=('cipher_sha256','wiring_model','step_model','constraints_hash','scope_hash','pair_domain')
