@@ -24,7 +24,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.4.2"
+VERSION="0.4.3"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
@@ -99,7 +99,7 @@ def detect_nvidia():
 def hardware():
     global _HW
     if _HW is not None:return _HW
-    gpus=[];caps=["cpu"]
+    gpus=[];caps=["cpu","bounded_crib_v1"]
     sys.path.insert(0,str(ROOT/"solver"/"runtime"/"src"))
     try:
         from search.portable_search import opencl_devices, qualify_device
@@ -377,10 +377,42 @@ def run_portable(lease,runtime=None,state_path=None):
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 
+def run_constrained(lease,runtime=None,state_path=None):
+    from search.crib_work import run
+    runtime=runtime if runtime is not None else {}
+    runtime['resource']='CPU'
+    last=time.monotonic()
+    def checkpoint(done,total):
+        nonlocal last
+        settings=runtime.get('settings',{'allow_cpu':True,'cpu_percent':50})
+        if not settings.get('allow_cpu',True) or settings.get('cpu_percent',0)<=0:
+            raise InterruptedError('CPU disabled during constrained work')
+        if state_path:
+            ctl=read_control(state_path)
+            while ctl['paused'] and not ctl['stop_requested']:
+                publish_health(runtime,'paused');time.sleep(.25);ctl=read_control(state_path)
+            if ctl['stop_requested']:
+                raise InterruptedError('Constrained work stopped; no completion submitted')
+        now=time.monotonic()
+        # One CPU thread. Bound duty as well as parallelism for this engine.
+        pct=max(1,min(100,int(settings.get('cpu_percent',50))))
+        delay=(now-last)*(100-pct)/pct
+        until=time.monotonic()+delay
+        while time.monotonic()<until:
+            if state_path and read_control(state_path)['stop_requested']:
+                raise InterruptedError('Constrained work stopped during cooldown')
+            time.sleep(min(.1,max(0,until-time.monotonic())))
+        last=time.monotonic()
+        runtime['progress']=done/max(1,total)
+        if state_path:publish_health(runtime,'computing')
+    result=run(lease,checkpoint=checkpoint)
+    return result,len(result['receipt']['candidates'])
+
 def execute(lease,runtime=None,state_path=None):
     if lease["engine"]=="demo_hash":return run_demo(lease)
     if lease["engine"]=="event_stochastic_v1":return run_event_stochastic(lease)
     if lease["engine"]=="portable_event_v1":return run_portable(lease,runtime,state_path)
+    if lease["engine"]=="bounded_crib_v1":return run_constrained(lease,runtime,state_path)
     raise RuntimeError("Unsupported engine: "+repr(lease["engine"]))
 
 def gpu_cooldown(percent,compute_seconds):

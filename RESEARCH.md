@@ -4,9 +4,16 @@ The existing exploratory campaign remains active while replacement methods are
 evaluated separately. Existing results and contribution records are preserved.
 No replacement campaign is qualified yet. Research qualification must not
 interrupt the current campaign before a tested replacement is ready to take over.
-The owner has authorized a replacement only after testing demonstrates a useful
-advantage and a safe, reversible transition is prepared. The running campaign
-continues until those conditions are met.
+An additional experimental campaign is being prepared alongside the existing
+campaign. It is not a replacement and has no demonstrated recovery advantage.
+The constrained client supports bounded, indexed CPU jobs and preserves budget
+cutoffs as unknown results. Matching computations verify execution, not a
+historical decryption or exhaustive elimination outside the stated hypothesis.
+
+Indexed jobs avoid repeating their own mechanical-core sequence within each
+crib hypothesis. Different hypotheses may examine the same mechanical settings;
+this is not a claim that nobody else has tested those keys. Duration estimates
+depend on available volunteers and include separate verification work.
 
 Two separate research engines now support evaluation:
 

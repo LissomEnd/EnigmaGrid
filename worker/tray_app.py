@@ -17,7 +17,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 APP_NAME="Enigma Volunteer Grid"
-APP_VERSION="0.4.2"
+APP_VERSION="0.4.3"
 BG="#0b1020";CARD="#131c31";CARD2="#18233c";TEXT="#f4f7fb";MUTED="#98a6c2"
 ACCENT="#55d6ff";ACCENT2="#7768ff";GREEN="#62d99b";AMBER="#f4b860";RED="#ff6b7a"
 
