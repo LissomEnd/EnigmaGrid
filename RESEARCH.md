@@ -130,3 +130,27 @@ cases passed, including the six new cases; full replay also matched in two
 implementations. The U264 prefix scores -5.7033, exceeded by three of the same
 3,304 optimized candidates. This remains a diagnostic comparison, not an
 estimated false-positive probability or a full unknown-key recovery benchmark.
+
+### A durable research program, not repeated campaign replacement
+
+`search.research_program` prepares a 90-day planning horizon. Work is indexed
+and reproducible: round-robin crib/offset hypotheses, batches of 128 cores, and
+a bijective modular permutation within each mechanical domain. Extending the
+calendar estimate does not change previously defined jobs. Core ranges never
+wrap and do not repeat within a hypothesis. This does not establish non-overlap
+with the earlier random pilot or third-party searches.
+
+`scripts/run_research_program.py --proposal proposal.json --state-dir PRIVATE_DIR`
+runs at most eight offline jobs or 30 seconds by default, checked between jobs.
+It stores hashed receipts and an atomic checkpoint, detects a changed proposal
+or corrupt stored receipt, and resumes after the last saved job. A concurrent
+runner is refused. After a crash a stale lock needs manual inspection; no
+automatic lock stealing occurs. An interrupted in-flight job may be repeated;
+saved receipts are reused. Unknown-budget results remain explicitly unknown.
+
+The horizon is a capacity estimate, not a commitment to spend 90 days on an
+unqualified hypothesis. Weekly review covers independent recovery, candidate
+quality, resources and overlap with prior work. Regression or invalidated
+hypotheses stop experimental work; the existing volunteer campaign remains
+running. Production promotion still needs demonstrated research benefit and
+tested worker/validator compatibility. This runner has no production access.
