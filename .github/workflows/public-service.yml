@@ -10,7 +10,7 @@ jobs:
       - name: Check service from outside the private network
         shell: python
         run: |
-          import json, urllib.request
+          import json, urllib.request, urllib.error
           base = 'https://enigma-grid.tail40f219.ts.net'
           for path in ['/health', '/api/public/status', '/']:
               with urllib.request.urlopen(base + path, timeout=30) as response:
@@ -21,3 +21,10 @@ jobs:
                   if path == '/health':
                       assert json.loads(body)['ok']
                   print(path, response.status, len(body), 'bytes')
+          for path in ['/admin', '/admin.js', '/api/status', '/api/admin', '/state/grid.sqlite3', '/config/server.json']:
+              try:
+                  urllib.request.urlopen(base + path, timeout=30)
+                  raise AssertionError('Private route unexpectedly public: ' + path)
+              except urllib.error.HTTPError as error:
+                  assert error.code == 404, (path, error.code)
+                  print(path, 'private route not exposed')

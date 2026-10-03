@@ -2,7 +2,7 @@
 
 Volunteer-computing platform for the unresolved P1030680 Naval Enigma M4 message.
 
-Help investigate a historical ciphertext by donating spare computing time. The project is independent and is not affiliated with Veritasium. No decryption has been established by this project.
+Help investigate a historical ciphertext by donating spare computing time. This is an independent community project. No decryption has been established by this project.
 
 ## For volunteers
 Download `EnigmaGridSetup.exe` from [official releases](https://github.com/LissomEnd/EnigmaGrid/releases), run it, choose a display name and set your resource limits. The Windows x64 installer includes the runtime; Python, administrator rights and manual server configuration are not required. Only download a published release, not an unfinished development build.
@@ -32,7 +32,7 @@ be reported privately using the repository's Security tab.
 
 Work is issued as deterministic units with crash-safe leases. Unexpected shutdown or network loss does not damage the campaign; expired work is requeued.
 
-Final credit requires independent reproduction. The default policy is 2-of-2 agreement; disagreement expands validation and can enter manual review. Invalid work receives no credit, repeated serious failures reduce trust, and devices can be quarantined.
+Final credit requires matching separate computations. The default policy is 2-of-2 agreement: another contributor or a fresh server CPU reproduction can supply the second result. The server verifier uses spare capacity, yields to host/server load and never earns volunteer credit. This is computational reproduction, not independent human endorsement. Disagreement expands validation and can enter manual review. Invalid work receives no credit, repeated serious failures reduce trust, and devices can be quarantined.
 
 The coordinator also reproduces accepted Enigma result/key/event structures before final acceptance. A high language score or software round-trip alone is never treated as proof of a historical decryption.
 
@@ -46,6 +46,8 @@ Updates use an Ed25519-signed manifest, SHA-256/size verification, safe-boundary
 The Lenovo coordinator binds only to `127.0.0.1:8765`. Public access is designed exclusively through Tailscale Funnel HTTPS, so no router port-forward or home public IP is exposed.
 
 ## Research and release status
+
+
 This is a heuristic search, not an exhaustive proof over every Enigma key and transcription model. Progress percentages describe the scheduled search campaign, not the probability of solving the message. A completed campaign can still leave the message unresolved.
 
 Release-specific validation and known limitations belong in the corresponding GitHub release notes. Development builds and a reachable dashboard alone do not establish that a public release is ready.

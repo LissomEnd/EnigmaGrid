@@ -46,7 +46,7 @@ def main():
         assert h.get("X-Frame-Options")=="DENY"
         assert "default-src 'self'" in h.get("Content-Security-Policy","")
         for path in ("/.git/config","/config/server.json","/state/grid.sqlite3",
-                     "/server/coordinator.py","/shared_token.txt","/admin","/api/admin"):
+                     "/server/coordinator.py","/shared_token.txt","/admin","/api/admin","/admin.js","/api/status"):
             code,_,_=request(base+path)
             assert code in (403,404), (path,code)
         code,_,body=request(base+"/api/public/config")

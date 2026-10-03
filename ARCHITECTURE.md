@@ -22,7 +22,7 @@ The prepared public campaign uses three plugboard profiles and six operator-even
 
 Work ranges are half-open `[start_unit, end_unit)`. Heartbeats renew leases; expired primary work is requeued. Duplicate or stale submissions cannot receive duplicate credit.
 
-Every submitted candidate passes type, range, key and event checks before native scoring. The coordinator reproduces its plaintext and score. A first valid submission remains pending until a different contributor submits a matching fingerprint. Disagreement requests a third replica; unresolved disagreement enters manual review. Repeated invalid work reduces trust and can quarantine a device.
+Every submitted candidate passes type, range, key and event checks before native scoring. The coordinator reproduces its plaintext and score. A first valid submission remains pending until a different contributor or the local server verifier independently recomputes the search and produces a matching fingerprint. The server does not read submitted candidates to generate its result and receives no contribution credit. Disagreement requests a third replica; unresolved disagreement enters manual review. Repeated invalid work reduces trust and can quarantine a device.
 
 Redundant computation is not cryptographic proof of total effort or strong identity verification. Colluding accounts remain a limitation; registration challenges, rate limits and quarantine reduce abuse but do not establish that each account is a different person. A reproducible or high-scoring candidate is not proof of historical decryption.
 

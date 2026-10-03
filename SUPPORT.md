@@ -15,9 +15,10 @@ for vulnerabilities or exposed secrets.
 ## The dashboard says 0% or my name is not on the leaderboard
 
 Submitted work initially appears under **Awaiting validation**. Final progress
-and credit require matching work from another contributor. With only one
-contributor online, pending work can grow while verified progress remains zero.
-This is expected. A public name appears only after verified credit, and only
+and credit require matching separate computations from another contributor or
+the server's spare-capacity verifier. If the server is busy and no other
+contributor can reproduce the work, pending work grows while verified progress
+can remain zero. A public name appears only after verified credit, and only
 if public credit was enabled. Do not create extra identities to self-validate.
 
 ## My GPU is unavailable

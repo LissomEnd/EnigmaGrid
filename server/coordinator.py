@@ -126,6 +126,11 @@ def init_db():
     ensure_column(con,"devices","valid_jobs","integer not null default 0")
     ensure_column(con,"devices","invalid_jobs","integer not null default 0")
     ensure_column(con,"leases","purpose","text not null default 'primary'")
+    con.execute("""create table if not exists server_verifications(
+      segment_id text not null, start_unit integer not null, end_unit integer not null,
+      status text not null, updated real not null, fingerprint text,
+      compute_seconds real not null default 0, detail text not null default '',
+      primary key(segment_id,start_unit,end_unit))""")
     con.close()
 
 def audit(con,kind,device_id=None,**detail):
@@ -300,8 +305,13 @@ def validation_candidate(con,dev):
     for r in rows:
         ok,resource,pct=device_eligible(dev,r)
         if not ok:continue
+        local=con.execute("""select status,updated from server_verifications
+            where segment_id=? and start_unit=? and end_unit=?""",
+            (r['id'],r['v_start'],r['v_end'])).fetchone()
+        if local and local['status']=='running' and local['updated']>now()-15:continue
         prior=con.execute("""select count(*) n from submissions where segment_id=? and start_unit=? and end_unit=?""",
                           (r["id"],r["v_start"],r["v_end"])).fetchone()["n"]
+        if local and local['status']=='done':prior+=1
         active=con.execute("""select count(*) n from leases where segment_id=? and start_unit=? and end_unit=?
                               and status='leased' and purpose='validation'""",
                            (r["id"],r["v_start"],r["v_end"])).fetchone()["n"]
@@ -358,10 +368,13 @@ def reconcile(con,segid,start,end):
                      (segid,start,end)).fetchall()
     counts=defaultdict(list)
     for r in rows:counts[r["fingerprint"]].append(r)
+    local=con.execute("""select fingerprint from server_verifications where
+        segment_id=? and start_unit=? and end_unit=? and status='done'""",(segid,start,end)).fetchone()
+    local_fp=local['fingerprint'] if local else None
     best_fp=None;best=[]
     for fp,items in counts.items():
-        if len(items)>len(best):best_fp,best=fp,items
-    if len(best)>=v["base_required"]:
+        if best_fp is None or len(items)+int(fp==local_fp)>len(best)+int(best_fp==local_fp):best_fp,best=fp,items
+    if best and len(best)+int(best_fp==local_fp)>=v["base_required"]:
         canonical=best[0]
         con.execute("""insert or ignore into done_ranges(segment_id,start_unit,end_unit,lease_id,device_id,completed_at,result_json)
                        values(?,?,?,?,?,?,?)""",(segid,start,end,canonical["lease_id"],canonical["device_id"],now(),canonical["result_json"]))
@@ -373,8 +386,8 @@ def reconcile(con,segid,start,end):
                 con.execute("update submissions set status='rejected' where id=?",(r["id"],))
                 trust_penalty(con,r["device_id"],False,"consensus_mismatch")
         return "verified"
-    total=len(rows)
-    if len(counts)>1 and v["target_replicas"]<v["max_replicas"]:
+    total=len(rows)+int(local_fp is not None)
+    if len(set(counts)|({local_fp} if local_fp else set()))>1 and v["target_replicas"]<v["max_replicas"]:
         con.execute("""update validations set target_replicas=max_replicas
                        where segment_id=? and start_unit=? and end_unit=?""",(segid,start,end))
         return "pending_tiebreak"

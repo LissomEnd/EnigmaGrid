@@ -44,3 +44,5 @@ jobs:
         run: python tests/test_worker_controls.py
       - name: Windows state file lock recovery
         run: python tests/test_state_file_locks.py
+      - name: Update signature and mandatory policy
+        run: python tests/test_update_integrity.py

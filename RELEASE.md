@@ -16,12 +16,21 @@ Release updates use two independent trust layers: GitHub build provenance and th
 1. Run CI and the release-candidate workflow from the intended commit.
 2. Download the update ZIP and verify its GitHub artifact attestation.
 3. Create `update-manifest.json` locally with `scripts/create_update_manifest.py`, specifying the final repository, semantic version and release notes.
+   For a required update, set `--mandatory` or a `--min-supported` version above the affected clients. The signed manifest controls the required-update prompt; changing the coordinator minimum alone only blocks new leases.
 4. Sign the exact manifest on the trusted signing machine with `scripts/sign_update_manifest_dpapi.py`.
 5. Verify `update-manifest.sig` using the public key embedded in the worker.
 6. Upload the update ZIP, manifest and signature to the GitHub Release.
 7. Only after the release is fully visible may `min_worker_version` be raised for a mandatory update.
 
 Mandatory updates are downloaded in the background and applied only between leases. Refusal finishes current work and closes safely. A failed post-update health check restores the previous frozen runtime automatically.
+
+## Update validation
+
+CI runs `tests/test_update_integrity.py` with an ephemeral key to reject altered signatures, payloads, sizes and repository identity, prevent downgrade prompts, and ensure a previously dismissed update is prompted again when its signed minimum makes it required.
+
+On the signing workstation, `tests/test_frozen_update_prompts.py` exercises the actual old Windows executable and native update dialogs against the official next ZIP. It covers optional and required acceptance/refusal, unchanged contributor identity and exact post-update executable hashes. `ENIGMA_TEST_SIGNING_KEY_BLOB` selects the protected local signing key. Both official release directories must already be available as indicated in the test. `ENIGMA_TEST_UPDATE_BUSY=1` runs safe-boundary cases with active isolated jobs. The fixture proxy and certificate are scoped only to child processes; no system trust, public release or production identity is changed. Never publish its test manifests.
+
+`tests/test_frozen_update_local.py` separately checks successful application and rollback after an intentionally inconsistent version/health check. Run these local tests before publishing a new package; they are not replaced by source-only CI.
 
 ## Key handling
 The private Ed25519 release key must remain outside the repository. Normal signing decrypts it only in memory from the protected local vault; no plaintext PEM is written during normal signing.
