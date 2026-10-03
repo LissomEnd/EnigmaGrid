@@ -32,6 +32,10 @@ jobs:
         run: python tests/test_historical_recovery.py
       - name: Offline research proposal gates
         run: python tests/test_research_plan.py
+      - name: Experimental search receipts
+        run: python tests/test_standard_receipts.py
+      - name: Crib window stepping equivalence
+        run: python tests/test_crib_window.py
       - name: Quarantine tests
         run: python tests/test_quarantine_v2.py
       - name: Security tests

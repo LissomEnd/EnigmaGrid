@@ -86,3 +86,47 @@ Background: [target record and indicator analysis](https://enigma.hoerenberg.com
 [Krah's M4 project](https://www.bytereef.org/m4_project.html).
 Published negatives must be matched to their exact crib, model and key domain
 before excluding duplicate work. No decryption of P1030680 is claimed.
+
+### Candidate quality and prototype improvements
+
+A read-only audit on 2026-10-03 independently replayed 3,248 stored candidate
+keys and event descriptions with the pure Python rotor implementation: no
+plaintext discrepancies were found. The highest-ranked texts inspected did not
+establish a coherent historical message. Replay agreement validates computation,
+not the research hypothesis or a decryption claim.
+
+`scripts/calibrate_language.py --output calibration.json` compares the current
+German quadgram model with the two historical 72-letter controls and 1,000
+deterministic letter shuffles per control. An optional `--candidate-texts` accepts
+a JSON list of plaintext strings; it does not access production state. In a
+later snapshot of 3,304 optimized candidates, 1,248 scored at least as highly as
+P1030683 and 2,248 as P1030684 under full-message quadgrams. None of the 1,000
+shuffles per control did so. This illustrates why random-shuffle performance
+cannot calibrate false positives after an optimization search. These two
+controls are not a representative corpus and must not become training data for
+a replacement score. Stronger, independent naval-message controls remain needed.
+
+The constrained prototype now computes electrical permutations only inside the
+crib window while advancing all preceding mechanical steps. Differential tests
+cover random ring/start settings, double-notch rotors, nonzero offsets and
+clean/substitution/omission receipts. Experimental no-event search results now
+include full keys for independent replay; no plaintext-only result needs to be
+trusted. These changes do not modify the deployed event engine or activate a
+replacement campaign.
+
+Repeating the same 112 target pilot jobs after this optimization took 57.18
+seconds locally versus 94.29 seconds in the earlier run (about 39% less elapsed
+time; machine load was not controlled). All receipt fields, including scope
+hashes, node counts and completion status, matched the previous run exactly.
+Both runs found zero candidates. This improves throughput, not demonstrated
+recovery probability, and does not make the full domain practical.
+
+A third held-out control is now sourced from the M4 Project's
+[U264 break](https://www.bytereef.org/m4-project-first-break.html), using its
+raw 232-letter log decryption rather than the edited interpretation. It has a
+different daily key from the two U534 controls. This extends historical tests
+without teaching the language model the answers. All 18 bounded historical
+cases passed, including the six new cases; full replay also matched in two
+implementations. The U264 prefix scores -5.7033, exceeded by three of the same
+3,304 optimized candidates. This remains a diagnostic comparison, not an
+estimated false-positive probability or a full unknown-key recovery benchmark.

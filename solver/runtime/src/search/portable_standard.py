@@ -6,7 +6,7 @@ import numpy as np
 from numba import njit, prange
 from search.portable_search import initial_keys, mutate, BLOCK, QTAB_INT
 from search.event_stochastic import SHELLS, QTAB, decrypt_score_event
-from search.cpu_numba import encode, decode
+from search.cpu_numba import encode, decode, IDX
 
 @njit(cache=True, parallel=True)
 def costs(inp, keys):
@@ -49,5 +49,14 @@ def search(text, seed, *, count=256, iterations=128, topk=8):
         for i in np.lexsort((np.arange(size),best_values))[:topk]:
             k=best[i]
             _,_,_,out=decrypt_score_event(inp,SHELLS[k[0]],k[1:5],k[5:9],k[9:35],QTAB,0,36,1,k[35:39])
-            winners.append(dict(cost=int(best_values[i]),attempt=seed+off+int(i),plaintext=decode(out)))
+            names={v:name for name,v in IDX.items()}
+            shell=SHELLS[k[0]]
+            letters=lambda row: ''.join(chr(65+int(x)) for x in row)
+            winners.append(dict(cost=int(best_values[i]),attempt=seed+off+int(i),plaintext=decode(out),
+                engine='portable_standard_research_v1',
+                key=dict(reflector=names[int(shell[0])],greek=names[int(shell[1])],
+                    moving_rotors=[names[int(x)] for x in shell[2:]],
+                    rings=letters(k[1:5]),positions=letters(k[5:9]),
+                    plugboard=[chr(65+a)+chr(65+int(b)) for a,b in enumerate(k[9:35]) if a<b]),
+                model='clean',historical_solution=False))
     return sorted(winners,key=lambda x:(x['cost'],x['attempt']))[:topk]

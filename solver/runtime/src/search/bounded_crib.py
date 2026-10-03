@@ -6,9 +6,24 @@ Budgets yield UNKNOWN; receipts certify only the supplied domain and crib.
 from dataclasses import replace, asdict
 from hashlib import sha256
 import json
-from search.c3_models import Key, stream, solve_board, pair_strings, normalize
+from search.c3_models import Key, stream, solve_board, pair_strings, normalize, letters, step, core
 
 VERSION = 'bounded_crib_v1'
+
+
+def crib_rows(key, offset, length):
+    """Event-free unplugged rows only where constraints need them.
+
+    Advance every prefix step, including double steps; skip only electrical
+    permutations outside the crib. Full candidate replay remains independent.
+    """
+    p=list(letters(key.positions));rings=letters(key.rings)
+    for _ in range(offset):step(p,key.moving_rotors)
+    rows=[]
+    for _ in range(length):
+        step(p,key.moving_rotors)
+        rows.append(tuple(core(x,key,p,rings) for x in range(26)))
+    return tuple(rows)
 
 def digest(value):
     return sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -74,8 +89,9 @@ def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
     if not conflict:
         for h in sorted(canonical):
             k=canonical[h]; visited+=1
-            rows=stream(k,len(obs),include_plugs=False)
-            solved=solve_board(rows,edges,max_pairs=pairs,node_limit=node_limit,solution_limit=board_limit)
+            rows=crib_rows(k,offset,len(crib))
+            local_edges=[(i-offset,a,b) for i,a,b in edges]
+            solved=solve_board(rows,local_edges,max_pairs=pairs,node_limit=node_limit,solution_limit=board_limit)
             nodes+=solved['nodes']
             uncertain=solved['status']=='unknown_budget'
             for partial in solved['partial_boards']:

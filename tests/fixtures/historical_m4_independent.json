@@ -1,0 +1,32 @@
+[
+  {
+    "id": "M4_PROJECT_U264",
+    "source": "https://www.bytereef.org/m4-project-first-break.html",
+    "scope": "Exact raw server-log decryption, not the corrected prose interpretation; a different daily key from P1030683/P1030684.",
+    "ciphertext": "NCZWVUSXPNYMINHZXMQXSFWXWLKJAHSHNMCOCCAKUQPMKCSMHKSEINJUSBLKIOSXCKUBHMLLXCSJUSRRDVKOHULXWCCBGVLIYXEOAHXRHKKFVDREWEZLXOBAFGYUJQUKGRTVUKAMEURBVEKSUHHVOYHABCJWMAKLFKLMYFVNRIZRVVRTKOFDANJMOLBGFFLEOPRGTFLVRHOWOPBEKVWMUQFMPWPARMFHAGKXIIBG",
+    "plaintext": "VONVONJLOOKSJHFFTTTEINSEINSDREIZWOYYQNNSNEUNINHALTXXBEIANGRIFFUNTERWASSERGEDRUECKTYWABOSXLETZTERGEGNERSTANDNULACHTDREINULUHRMARQUANTONJOTANEUNACHTSEYHSDREIYZWOZWONULGRADYACHTSMYSTOSSENACHXEKNSVIERMBFAELLTYNNNNNNOOOVIERYSICHTEINSNULL",
+    "key": {
+      "reflector": "Bthin",
+      "greek": "Beta",
+      "moving_rotors": [
+        "II",
+        "IV",
+        "I"
+      ],
+      "rings": "AAAV",
+      "positions": "VJNA",
+      "plugboard": [
+        "AT",
+        "BL",
+        "DF",
+        "GJ",
+        "HM",
+        "NW",
+        "OP",
+        "QY",
+        "RZ",
+        "VX"
+      ]
+    }
+  }
+]

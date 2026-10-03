@@ -14,6 +14,7 @@ from reference.enigma_m4 import crypt as independent
 def run():
     results=[];rng=random.Random(20261003)
     fixtures=json.loads((ROOT/'tests/fixtures/historical_m4.json').read_text())
+    fixtures+=json.loads((ROOT/'tests/fixtures/historical_m4_independent.json').read_text())
     for fixture in fixtures:
         truth=Key.from_dict(fixture['key'])
         full=fixture['ciphertext'];published=fixture['plaintext']
@@ -42,6 +43,6 @@ def run():
                 results.append(dict(id=fixture['id'],crib_length=length,model=model,recovered=True,
                     candidates=len(receipt['candidates']),seconds=round(time.perf_counter()-start,4),
                     scope_hash=receipt['scope_hash']))
-    return dict(scope='Two historical messages sharing a daily key, 72-letter prefixes; true core hidden among 128 supplied mechanical configurations; unknown ten-cable plugboard. Corruptions are injected test cases, not source claims.',results=results)
+    return dict(scope='Three historical messages across two daily keys, 72-letter prefixes; true core hidden among 128 supplied mechanical configurations; unknown ten-cable plugboard. Corruptions are injected test cases, not source claims.',results=results)
 
 if __name__=='__main__':print(json.dumps(run(),indent=2))
