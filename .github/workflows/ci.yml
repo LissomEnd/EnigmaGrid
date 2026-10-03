@@ -20,6 +20,8 @@ jobs:
         run: python -m py_compile server/coordinator.py server/validator.py worker/worker.py worker/updater.py worker/updater_apply.py worker/tray_app.py worker/installer.py scripts/create_update_manifest.py scripts/create_installer_payload.py scripts/sign_update_manifest_dpapi.py
       - name: Check dashboard JavaScript
         run: node --check web/app.js
+      - name: Dashboard privacy and asynchronous controls
+        run: node tests/test_dashboard_controls.cjs
       - name: Consensus tests
         run: python tests/test_consensus_v2.py
       - name: Quarantine tests
