@@ -186,7 +186,16 @@ def search(text, start_seed, count=4096, iterations=512, topk=8,
             best_keys[better], best_costs[better] = keys[better], costs[better]
             if backend == 'opencl' and percent < 100:
                 elapsed = time.perf_counter()-started
-                time.sleep(min(1, elapsed*(100-max(1, percent))/max(1, percent)))
+                # Slow GPUs may need more than one second of rest to honor a
+                # small duty budget. Poll controls without truncating that rest.
+                deadline = time.perf_counter()+elapsed*(100-max(1, percent))/max(1, percent)
+                while True:
+                    if checkpoint:
+                        checkpoint(offset, iteration)
+                    remaining = deadline-time.perf_counter()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(.1, remaining))
         ids = np.lexsort((np.arange(size), best_costs))[:topk]
         winners.extend((int(best_costs[i]), start_seed+offset+int(i), best_keys[i].copy()) for i in ids)
     winners.sort(key=lambda row: (row[0], row[1]))

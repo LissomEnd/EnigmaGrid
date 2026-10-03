@@ -74,6 +74,8 @@ jobs:
         run: python tests/test_portable_search.py
       - name: Worker resource and pause controls
         run: python tests/test_worker_controls.py
+      - name: Slow GPU duty budget and responsive rest
+        run: python tests/test_gpu_duty.py
       - name: Windows state file lock recovery
         run: python tests/test_state_file_locks.py
       - name: Update signature and mandatory policy
