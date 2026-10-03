@@ -33,7 +33,7 @@ def run(candidate_texts=()):
             optimized_candidates_scoring_at_least_truth=sum(x>=truth for x in candidates)))
     return dict(table_sha256=hashlib.sha256(QFILE.read_bytes()).hexdigest(),
         controls=rows,candidate_count=len(candidates),
-        caveats=['Three controls span two daily keys; they are not a representative naval corpus.',
+        caveats=['Four controls span three daily keys; they are not a representative naval corpus.',
             'Shuffle counts are not p-values for search-optimized candidates.',
             'A high score or exact replay does not establish a historical solution.',
             'Do not train a replacement scorer on these held-out controls.'])

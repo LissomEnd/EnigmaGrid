@@ -244,3 +244,7 @@ configuration and recomputes it. The production HTTP path does not opt in and
 continues to reject this engine. No experimental campaign is scheduled by this
 change. Production integration still requires bounded asynchronous verification,
 client capability negotiation and scientific qualification.
+
+### Additional daily-key control
+
+The historical suite now includes [P1030713](https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=P1030713), solved by Enigma@Home in 2013. Its May 2, 1945 key is distinct from the previous controls. The raw published decryption, including apparent garbles, reproduces exactly with both simulators. All 24 bounded cases across four messages and three daily keys pass. These remain known-crib tests with the true mechanical core among 128 supplied alternatives, not full unknown-key recovery. This fixture must not be used to train a replacement language model and then reported as a held-out success. Earlier 18-case reports above describe the earlier suite.

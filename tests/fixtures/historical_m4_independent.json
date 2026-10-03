@@ -28,5 +28,20 @@
         "VX"
       ]
     }
+  },
+  {
+    "id": "P1030713",
+    "source": "https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=P1030713",
+    "scope": "Published raw decryption, including garbles. May 2, 1945 daily key; held out from language training. Broken by Enigma@Home in 2013.",
+    "ciphertext": "MPSANXAASRPBMXMNJMJYYPUGPFZOYAEQIEVWIOXHRVJECKAFVASOIELMFYBYGABXMYWOIVIMKGBA",
+    "plaintext": "LEITUNGVVVUUUSTUETZPKTXWWWHAVENXXFFFTTTEUNSZWOZWOVIERHUERMITVRRHHHVVVGELOEST",
+    "key": {
+      "reflector": "Cthin",
+      "greek": "Gamma",
+      "moving_rotors": ["V", "II", "VIII"],
+      "rings": "AAFB",
+      "positions": "ZPEU",
+      "plugboard": ["CP", "DG", "EJ", "FI", "KT", "LZ", "MS", "NO", "QU", "RW"]
+    }
   }
 ]
