@@ -18,7 +18,7 @@ async function refresh(){
   $('progressText').textContent=fmt(s.completed_units)+' of '+fmt(s.total_units)+' unique work units verified';
   const leaders=s.leaderboard||[];
   $('leaders').innerHTML=leaders.length?leaders.map(x=>'<tr><td>'+esc(x.display_name)+'</td><td>'+fmt(x.units)+'</td><td>'+fmt(x.jobs)+'</td><td>'+age(x.compute_seconds)+'</td></tr>').join(''):'<tr><td colspan="4" class="muted">No verified contributions yet.</td></tr>';
-  $('campaigns').innerHTML=(s.campaigns||[]).map(x=>'<div class="campaign"><div><b>'+esc(x.name)+'</b><div class="muted">'+esc(x.version)+'</div></div><div class="state">'+esc(x.status)+'</div></div>').join('');
+  $('campaigns').innerHTML=(s.campaigns||[]).filter(x=>x.status!=='archived').map(x=>'<div class="campaign"><div><b>'+esc(x.name)+'</b><div class="muted">'+esc(x.version)+'</div></div><div class="state">'+esc(x.status)+'</div></div>').join('');
  }catch(e){live(false,'Coordinator unavailable')}
 }
 function deviceHtml(d){

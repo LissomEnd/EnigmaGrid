@@ -1,6 +1,6 @@
 # Release validation status — 2026-10-03
 
-The 0.4.0 candidate includes real CPU and OpenCL search, a Windows x64 installer, resource controls, a tray application, a public dashboard and signed updates.
+[EnigmaGrid 0.4.0 is publicly released](https://github.com/LissomEnd/EnigmaGrid/releases/tag/v0.4.0), with real CPU and OpenCL search, a Windows x64 installer, resource controls, a tray application, a public dashboard and signed updates.
 
 ## Verified locally
 
@@ -15,9 +15,11 @@ The 0.4.0 candidate includes real CPU and OpenCL search, a Windows x64 installer
 
 ## Deployment and publication
 
-The coordinator is bound to loopback and exposed through Tailscale Funnel HTTPS. Version 0.4.0 responds on the configured endpoint. Registration remains closed while publication is being completed. The portable campaign manifest is prepared and has not yet been activated.
+The coordinator is bound to loopback and exposed through Tailscale Funnel HTTPS. Public registration is open and the 75,000-unit portable campaign is running. A Surface with Intel Iris Plus is contributing real CPU+GPU work; initial accepted results await independent volunteer reproduction before final credit.
 
-This file records development evidence, not a claim that a release is published. Consult GitHub Releases for the exact published version, assets, hashes, provenance and known limitations. Candidate hashes are intentionally kept out of this document because rebuilds change them.
+The published installer and ZIP were built from commit `de1404bb3b7e4c9085d5136d71be7a7f02733cb8` in [release workflow 37110771127](https://github.com/LissomEnd/EnigmaGrid/actions/runs/37110771127). Both GitHub attestations were verified locally, their uploaded digests matched, and the exact ZIP's update manifest was signed and verified. The exact published installer was downloaded anonymously on Surface, hash-checked and tested: CPU+GPU and CPU runs produced the same fingerprint and independent test credit. Signed update success and intentional rollback were also tested against the published package.
+
+[An independent public-service check](https://github.com/LissomEnd/EnigmaGrid/actions/runs/37111855534) passed from a GitHub-hosted Ubuntu machine outside the private network after launch. See the release assets for checksums and signatures. Old local research campaigns are stopped and their scientific results are preserved separately; they are not part of the public participant database.
 
 ## Limits
 
