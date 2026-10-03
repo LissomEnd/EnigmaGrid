@@ -8,6 +8,13 @@ The current exploratory campaign remains active while a replacement is evaluated
 separately. See [research qualification](RESEARCH.md) for methods and limitations.
 
 ## For volunteers
+
+[Watch the Windows setup and resource-control guide on YouTube](https://youtu.be/VfLBCZG5yc0)
+(2 minutes 52 seconds, English narration and subtitles).
+The tutorial covers installation, consent, CPU/GPU budgets, pause and safe stop,
+verified work, and updates. Download the current installer from the releases below;
+the interface and live statistics may change after the recording.
+
 Download `EnigmaGridSetup.exe` from [official releases](https://github.com/LissomEnd/EnigmaGrid/releases), run it, choose a display name and set your resource limits. The Windows x64 installer includes the runtime; Python, administrator rights and manual server configuration are not required. Only download a published release, not an unfinished development build.
 
 The Windows app provides:
