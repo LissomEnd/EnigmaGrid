@@ -154,3 +154,18 @@ quality, resources and overlap with prior work. Regression or invalidated
 hypotheses stop experimental work; the existing volunteer campaign remains
 running. Production promotion still needs demonstrated research benefit and
 tested worker/validator compatibility. This runner has no production access.
+
+### Prior-work overlap audit
+
+The HELUT catalog at commit `d90da14950a692331917a081dc527e1e5b3a2eea`
+was compared with the 112 proposed clean placements. 67 have identical or
+containing/contained constraints; this is not proof those settings were executed.
+Its [VIII-fast log](https://github.com/Digital-Defiance/HELUT/blob/d90da14950a692331917a081dc527e1e5b3a2eea/logs/campaign-catalog-rings-viii-fast.log)
+explicitly limits that run to 42 of 336 rotor orders.
+
+`scripts/audit_crib_overlap.py` compares an external catalog with a proposal,
+checks ciphertext equality, records file hashes, and distinguishes the direction
+of constraint implication. Zero exclusions are authorized by this comparison.
+Mapping matching placements to completed, independently checked key-domain
+receipts remains necessary before removing work. No external source code was
+executed and no third-party claim of a solution is adopted.
