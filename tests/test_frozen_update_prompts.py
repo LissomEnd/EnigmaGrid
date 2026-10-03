@@ -1,4 +1,4 @@
-"""Real 0.4.0 -> 0.4.1 frozen update dialogs and downloads in an isolated fixture.
+"""Real frozen update dialogs and downloads between configurable versions.
 
 Only child processes use the loopback HTTPS proxy and temporary certificate.
 No system trust, DNS, public release or production contributor is changed.
@@ -29,9 +29,10 @@ from cryptography.x509.oid import NameOID
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_frozen_update_local import force_stop_tmp,stop_runtime,wait_health
-OLD=ROOT/'dist/verified-0.4.0-backup'
-NEW=ROOT/'dist/windows-candidate'
-ASSET=ROOT/'dist/public-0.4.1/enigma-volunteer-windows.zip'
+OLD=Path(os.environ.get('ENIGMA_TEST_OLD_CANDIDATE', ROOT/'dist/verified-0.4.1-backup'))
+NEW=Path(os.environ.get('ENIGMA_TEST_CANDIDATE', ROOT/'dist/windows-candidate'))
+ASSET=Path(os.environ.get('ENIGMA_TEST_ASSET', ROOT/'dist/public-0.4.2/enigma-volunteer-windows.zip'))
+VERSION=os.environ.get('ENIGMA_TEST_TARGET_VERSION', '0.4.2')
 
 def wait_for(check,timeout=90):
     until=time.monotonic()+timeout
@@ -142,16 +143,16 @@ def main():
             case=tmp/label;install=case/'install';shutil.copytree(OLD,install)
             state=case/'user/client.json';state.parent.mkdir(parents=True)
             manifest=case/'manifest.json';sig=case/'manifest.sig'
-            cmd=[sys.executable,str(ROOT/'scripts/create_update_manifest.py'),str(ASSET),'--version','0.4.1',
+            cmd=[sys.executable,str(ROOT/'scripts/create_update_manifest.py'),str(ASSET),'--version',VERSION,
                  '--repository','LissomEnd/EnigmaGrid','--out',str(manifest),'--notes','ISOLATED LOCAL UPDATE TEST']
-            if mandatory:cmd+=['--mandatory','--min-supported','0.4.1']
+            if mandatory:cmd+=['--mandatory','--min-supported',VERSION]
             subprocess.run(cmd,check=True,stdout=subprocess.DEVNULL)
             subprocess.run([sys.executable,str(ROOT/'scripts/sign_update_manifest_dpapi.py'),str(manifest),
                             '--key-blob',key_blob,'--out',str(sig)],check=True,stdout=subprocess.DEVNULL)
             prefix='/LissomEnd/EnigmaGrid/releases/download/isolated-test/'
             files={'update-manifest.json':manifest,'update-manifest.sig':sig,'enigma-volunteer-windows.zip':ASSET}
             routes.clear();routes.update({prefix+n:p for n,p in files.items()})
-            routes['/repos/LissomEnd/EnigmaGrid/releases/latest']=json.dumps({'tag_name':'v0.4.1','draft':False,'prerelease':False,
+            routes['/repos/LissomEnd/EnigmaGrid/releases/latest']=json.dumps({'tag_name':'v'+VERSION,'draft':False,'prerelease':False,
                 'assets':[{'name':n,'browser_download_url':'https://github.com'+prefix+n} for n in files]}).encode()
             args=[str(install/'EnigmaGridWorker.exe'),'--state',str(state),'--server',base,'--cpu-percent','1','--gpu-percent','0']
             subprocess.run(args+['--name','Isolated update test','--register-only'],env=clientenv,check=True,timeout=120,stdout=subprocess.DEVNULL)
@@ -166,7 +167,7 @@ def main():
             print('WAITING_FOR_REAL_DIALOG',label,flush=True)
             hwnd,text=wait_for(lambda:dialog_for(install),90)
             assert ('REQUIRED' in text)==mandatory,text
-            assert '0.4.1' in text and 'ISOLATED LOCAL UPDATE TEST' in text
+            assert VERSION in text and 'ISOLATED LOCAL UPDATE TEST' in text
             if busy_case:
                 def computing():
                     try:return json.loads(state.with_name('worker-health.json').read_text()).get('status')=='computing'
@@ -175,7 +176,7 @@ def main():
             ctypes.windll.user32.PostMessageW.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_size_t,ctypes.c_ssize_t]
             ctypes.windll.user32.PostMessageW(hwnd,0x111,6 if accepted else 7,0)
             if accepted:
-                assert wait_health(state.with_name('worker-health.json'),'0.4.1',180)
+                assert wait_health(state.with_name('worker-health.json'),VERSION,180)
                 for name in ('EnigmaGridWorker.exe','EnigmaGrid.exe','EnigmaGridUpdater.exe'):
                     assert hashlib.sha256((install/name).read_bytes()).digest()==hashlib.sha256((NEW/name).read_bytes()).digest()
             elif mandatory:
@@ -183,7 +184,7 @@ def main():
                 assert json.loads(state.with_name('control.json').read_text())['stop_requested']
             else:
                 wait_for(lambda:state.with_name('update_state.json').exists(),10)
-                assert json.loads(state.with_name('update_state.json').read_text())['dismissed_version']=='0.4.1'
+                assert json.loads(state.with_name('update_state.json').read_text())['dismissed_version']==VERSION
                 assert worker.poll() is None
             assert hashlib.sha256(state.read_bytes()).hexdigest()==identity
             if busy_case:

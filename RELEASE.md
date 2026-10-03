@@ -32,6 +32,10 @@ On the signing workstation, `tests/test_frozen_update_prompts.py` exercises the 
 
 `tests/test_frozen_update_local.py` separately checks successful application and rollback after an intentionally inconsistent version/health check. Run these local tests before publishing a new package; they are not replaced by source-only CI.
 
+For versioned test directories, set `ENIGMA_TEST_OLD_CANDIDATE` to the extracted previous release, `ENIGMA_TEST_CANDIDATE` to the extracted candidate, `ENIGMA_TEST_ASSET` to the candidate ZIP and `ENIGMA_TEST_TARGET_VERSION` to its version. This preserves earlier packages while testing the exact next release. The rollback test uses the candidate, asset and target-version settings; the prompt test also uses the previous release.
+
+Run the frozen tests sequentially in a Windows user session without an active volunteer client. The worker intentionally holds a per-user singleton mutex, so concurrent fixtures interfere even with separate state directories. Do not stop a production client merely to make a fixture pass; use a separate test session if needed.
+
 ## Key handling
 The private Ed25519 release key must remain outside the repository. Normal signing decrypts it only in memory from the protected local vault; no plaintext PEM is written during normal signing.
 
