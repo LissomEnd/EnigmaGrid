@@ -248,3 +248,31 @@ client capability negotiation and scientific qualification.
 ### Additional daily-key control
 
 The historical suite now includes [P1030713](https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=P1030713), solved by Enigma@Home in 2013. Its May 2, 1945 key is distinct from the previous controls. The raw published decryption, including apparent garbles, reproduces exactly with both simulators. All 24 bounded cases across four messages and three daily keys pass. These remain known-crib tests with the true mechanical core among 128 supplied alternatives, not full unknown-key recovery. This fixture must not be used to train a replacement language model and then reported as a held-out success. Earlier 18-case reports above describe the earlier suite.
+
+### Reproducing the known-core scoring diagnostic
+
+Run `python scripts/benchmark_plugboard.py --output result.json`. This uses the
+four published fixture messages, supplies the correct mechanical core, and
+searches only the plugboard. It is intentionally easier than blind recovery.
+The fixed seed, sixteen restarts, neighborhood invariants and reference replay
+make failures inspectable. It uses approximately 10% duty on one thread.
+
+The generic quadgram run recovered 0/4 messages. On three of the four controls,
+its best incorrect candidate even outranked the historical truth. This is a
+ranking failure for that objective, not just failure to find a key. It does not
+test the production event-balanced objective.
+
+Optional `--trigrams PATH` accepts locally supplied uppercase trigram/count data;
+`--bigrams PATH` additionally enables IC/bigram/trigram stages.
+`--variable-cables` adds removal/connection moves and varies initial cable count.
+These are diagnostic variants, not implementations of the complete published
+Ostwald/Weierud attack. Different variants use different evaluation counts, so
+compare recovery and scope, not absolute costs or nominal restart counts alone.
+The report records external table hashes. No external data is downloaded.
+
+Local experiments with the [Sullivan/Weierud 1941 military frequencies](https://cryptocellar.org/bgac/key-of-e.html)
+recovered 0/4 with each tested variant. They improved some ranking comparisons,
+but a wider candidate search found additional false texts outranking truth.
+Those tables are not bundled or relicensed here. The controls remain excluded
+from language-model training. These negative results do not prove impossibility;
+they prevent promoting an unqualified method merely because its score improves.
