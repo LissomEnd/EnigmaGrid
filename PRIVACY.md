@@ -23,6 +23,12 @@ A contributor appears on the public leaderboard only when public credit is enabl
 ## Deletion
 A contributor can request account deletion using the private dashboard credential. Deletion removes the contributor record, devices, submissions, contribution/credit rows, and device audit rows. Completed search ranges remain part of the scientific campaign but their device reference is changed to "deleted".
 
+Restricted coordinator recovery backups can retain deleted records for up to
+seven days while the backup task is running. Backups are not public and are
+not used for analytics. If the server is offline, expired backups are removed
+on the next backup run. An operator restoring a backup must reapply any
+deletion requests received since that backup before reopening the service.
+
 Uninstalling the Windows app removes the application. Local contributor identity/settings are retained by default so a later reinstall can resume the same identity; the uninstall UI offers an explicit option to delete them too.
 
 ## Updates and telemetry

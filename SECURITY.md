@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Reporting a vulnerability
-Do not open a public issue for a security vulnerability. Once the GitHub repository is public, use GitHub Private Vulnerability Reporting / Security Advisories.
+Do not open a public issue for a security vulnerability. Use [GitHub Private Vulnerability Reporting](https://github.com/LissomEnd/EnigmaGrid/security/advisories/new).
 
 Include the affected version, reproduction steps, impact and any proposed mitigation. Do not include real user tokens or private data.
 
@@ -11,7 +11,7 @@ Clients accept update packages only when the release manifest verifies against t
 The private release-signing key is kept outside the repository in an ACL-restricted DPAPI CurrentUser vault on Lenovo and must never be committed to GitHub. Normal signing decrypts it only in memory. This protects against repository/CI disclosure and offline theft of the blob, but a compromise running as the Lenovo signing user could still obtain signing authority. GitHub artifact attestations are an additional provenance signal, not a replacement for the pinned release signature.
 
 ## Server exposure
-The coordinator must bind to loopback only. Public access must go through Tailscale Funnel or an equivalent authenticated TLS reverse tunnel. Do not port-forward the coordinator from the home router.
+The coordinator must bind to loopback only. Public access must go through Tailscale Funnel or an equivalent TLS reverse tunnel. Funnel is public: private application operations still require application credentials. Do not port-forward the coordinator from the home router.
 
 ## Secrets
 Database files, server configuration, backups, update state, release bundles and environment files are excluded from Git. Rotate credentials after any suspected disclosure.
