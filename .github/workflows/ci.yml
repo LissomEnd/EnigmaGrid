@@ -42,6 +42,8 @@ jobs:
         run: python tests/test_research_resume.py
       - name: Research work bounds and cancellation
         run: python tests/test_research_job_bounds.py
+      - name: Offline research client controls
+        run: python tests/test_research_client.py
       - name: Prior crib scope comparison
         run: python tests/test_crib_overlap.py
       - name: Quarantine tests

@@ -187,3 +187,11 @@ checkpoint callback between mechanical cores to enforce pause or cancellation;
 an exception stops execution without returning a completed receipt. This is not
 yet wired into the volunteer client. Cancellation cannot interrupt a core already
 being evaluated, whose search is bounded by the validated limits.
+
+`worker/research_executor.py` provides an offline client adapter for testing those
+callbacks with pause, stop and CPU duty controls. It uses one computational thread
+and interprets the CPU percentage conservatively as a fraction of one core.
+Pauses and cooldown waits check controls every 50 ms; an active bounded core must
+finish before controls are checked. GPU execution is unsupported. The production
+worker does not advertise or route this engine, and coordinator/validator
+integration remains a separate qualification gate.
