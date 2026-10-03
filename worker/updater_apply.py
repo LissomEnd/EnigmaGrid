@@ -14,7 +14,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-FROZEN_FILES={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","SHA256SUMS.txt"}
+FROZEN_FILES={"EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt","SHA256SUMS.txt"}
 
 def wait_parent(pid,timeout=120):
     if os.name=="nt":
@@ -188,7 +188,7 @@ def cleanup_install(path,wait_pid=0,timeout=45):
     while time.time()<end:
         try:
             for name in ('EnigmaGrid.exe','EnigmaGridWorker.exe','EnigmaGridUpdater.exe',
-                         'EnigmaGridSetup.exe','release_config.json'):
+                         'EnigmaGridSetup.exe','release_config.json','LICENSES.txt'):
                 (target/name).unlink(missing_ok=True)
             marker.unlink(missing_ok=True)
             # Preserve any unrelated files placed in the installation directory.
@@ -235,7 +235,7 @@ def main():
     if kind=="frozen":stop_tray_for_update(state)
     try:
         if kind=="frozen":
-            names=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"]
+            names=["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt"]
             for name in names:
                 cur=root/name
                 if cur.exists():replace_with_retry(cur,backup/name,15)
@@ -272,7 +272,7 @@ def main():
         shutil.rmtree(backup,ignore_errors=True)
     except Exception:
         if kind=="frozen":
-            try:rollback_frozen(root,backup,["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"])
+            try:rollback_frozen(root,backup,["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt"])
             except Exception:pass
         raise
 

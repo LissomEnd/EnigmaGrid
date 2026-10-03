@@ -21,6 +21,14 @@ licenses. Their versions are pinned by the requirements files. Source and
 upstream license references are available from each package's distribution
 metadata.
 
+The Windows package includes `LICENSES.txt` with distribution metadata and
+license texts collected from the exact build environment, plus Python's license.
+The unmodified pystray component is LGPL v3; its source is available at
+https://github.com/moses-palmer/pystray/tree/v0.19.5 and from its PyPI source
+distribution. You can replace it and rebuild the application using
+`scripts/Build-WindowsStandalone.ps1`. No restriction is imposed on reverse
+engineering for debugging modifications to LGPL components.
+
 EnigmaGrid's original source is covered by the root MIT license. Historical
 rotor wiring and ciphertext are research inputs; a search result is not a claim
 of authorship of the historical message.

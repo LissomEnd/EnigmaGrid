@@ -4,7 +4,7 @@ from pathlib import Path
 out=Path(sys.argv[1])
 version=sys.argv[2]
 files={}
-for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json"):
+for name in ("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt"):
     p=out/name
     if not p.exists():raise SystemExit("missing "+name)
     files[name]={"sha256":hashlib.sha256(p.read_bytes()).hexdigest(),"size":p.stat().st_size}

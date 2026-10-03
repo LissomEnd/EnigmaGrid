@@ -47,6 +47,9 @@ $updater=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--noconsole",
 if($LASTEXITCODE -ne 0){throw "Updater build failed"}
 Copy-Item "$root\worker\release_config.json" "$out\release_config.json" -Force
 
+& $py "$root\scripts\collect_licenses.py" "$out\LICENSES.txt"
+if($LASTEXITCODE -ne 0){throw "License collection failed"}
+
 $hashes=Get-ChildItem $out -File | Get-FileHash -Algorithm SHA256
 $hashes | ForEach-Object {"$($_.Hash)  $([IO.Path]::GetFileName($_.Path))"} | Set-Content "$out\SHA256SUMS.txt" -Encoding ASCII
 $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
@@ -61,7 +64,8 @@ $setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
   "--add-binary","$out\EnigmaGrid.exe;payload",
   "--add-binary","$out\EnigmaGridWorker.exe;payload",
   "--add-binary","$out\EnigmaGridUpdater.exe;payload",
-  "--add-data","$out\release_config.json;payload") + $commonMeta + @("$root\worker\installer.py")
+  "--add-data","$out\release_config.json;payload",
+  "--add-data","$out\LICENSES.txt;payload") + $commonMeta + @("$root\worker\installer.py")
 & $py @setup
 if($LASTEXITCODE -ne 0){throw "Setup build failed"}
 Remove-Item "$out\installer_payload.json" -Force

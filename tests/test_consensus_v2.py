@@ -10,7 +10,7 @@ TMP=ROOT/"state_consensus_test"
 if TMP.exists(): shutil.rmtree(TMP)
 TMP.mkdir()
 os.environ["GRID_DATA_DIR"]=str(TMP)
-os.environ["GRID_CONFIG"]=str(ROOT/"config"/"server.json")
+os.environ["GRID_CONFIG"]=str(ROOT/"config"/"server.example.json")
 sys.path.insert(0,str(ROOT/"server"))
 import coordinator as c
 
