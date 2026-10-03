@@ -1,0 +1,21 @@
+name: Installation or usage help
+description: Ask about setup, GPU support, resource controls or contribution statistics.
+title: "[Help] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: "This is a public issue. Never paste tokens, private dashboard credentials, personal files or unredacted logs. Check SUPPORT.md first."
+  - type: input
+    id: version
+    attributes:
+      label: App version and Windows version
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: What do you need help with?
+      description: Describe what you tried and what appeared on screen. Include GPU model and driver version for GPU questions.
+    validations:
+      required: true

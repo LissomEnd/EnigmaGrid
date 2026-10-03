@@ -56,7 +56,7 @@ $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$out\*" -DestinationPath $zip -CompressionLevel Optimal
 
-& $py "$root\scripts\create_installer_payload.py" $out "0.4.0"
+& $py "$root\scripts\create_installer_payload.py" $out "0.4.1"
 if($LASTEXITCODE -ne 0){throw "Installer payload manifest failed"}
 $setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
   "--name","EnigmaGridSetup","--distpath","$root\dist","--workpath","$work\setup","--specpath",$spec,

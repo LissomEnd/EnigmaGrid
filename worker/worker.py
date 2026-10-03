@@ -15,6 +15,7 @@ import time
 import urllib.request
 from urllib.parse import urlparse
 from pathlib import Path
+from file_state import atomic_write
 
 try:
     from updater import UpdateManager
@@ -23,7 +24,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
@@ -183,20 +184,14 @@ def load_state(path):
     return obj
 
 def save_state(path,obj):
-    path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".tmp")
     raw=json.dumps(obj,separators=(",",":"),ensure_ascii=False).encode("utf-8")
     if os.name=="nt":
         wrapped={"_format":"dpapi-v1","blob":base64.b64encode(_dpapi(raw,True)).decode("ascii")}
-        tmp.write_text(json.dumps(wrapped,separators=(",",":")),encoding="utf-8")
-    else:
-        tmp.write_text(json.dumps(obj,indent=2),encoding="utf-8")
-        try:os.chmod(tmp,0o600)
-        except Exception:pass
-    tmp.replace(path)
+        raw=json.dumps(wrapped,separators=(",",":" )).encode("utf-8")
+    atomic_write(path,raw)
 
 def save_plain_json(path,obj):
-    path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_name(path.name+"."+secrets.token_hex(4)+".tmp")
-    tmp.write_text(json.dumps(obj,separators=(",",":")),encoding="utf-8");tmp.replace(path)
+    atomic_write(path,json.dumps(obj,separators=(",",":")).encode("utf-8"))
 
 def control_path(state_path):
     return Path(state_path).with_name("control.json")
@@ -258,9 +253,16 @@ def publish_health(runtime, status=None):
     if status:runtime["status"]=status
     path=runtime.get("health_path")
     if path:
-        save_plain_json(path,{"version":VERSION,"pid":os.getpid(),"started":runtime.get("started",time.time()),
-                              "heartbeat":time.time(),"status":runtime.get("status","starting"),
-                              "resource":runtime.get("resource","cpu"),"progress":runtime.get("progress",0)})
+        try:
+            save_plain_json(path,{"version":VERSION,"pid":os.getpid(),"started":runtime.get("started",time.time()),
+                                  "heartbeat":time.time(),"status":runtime.get("status","starting"),
+                                  "resource":runtime.get("resource","cpu"),"progress":runtime.get("progress",0)})
+        except OSError:
+            # A telemetry write must never abort a computation or its heartbeat.
+            # The next progress/heartbeat update retries; credentials and control
+            # writes deliberately retain their error reporting.
+            return False
+    return True
 
 def client_summary(state_path):
     state=load_state(Path(state_path))

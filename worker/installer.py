@@ -15,7 +15,7 @@ from tkinter import messagebox
 
 APP_ID="EnigmaVolunteerGrid"
 APP_NAME="Enigma Volunteer Grid"
-VERSION="0.4.0"
+VERSION="0.4.1"
 RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
 UNINSTALL_BASE=r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 PAYLOAD_NAMES=("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt")

@@ -75,7 +75,7 @@ def main():
     cfg=json.loads((ROOT/"config"/"server.example.json").read_text(encoding="utf-8"))
     cfg.update({"host":"127.0.0.1","port":port,"registration_open":True,
                 "registration_code":"","registration_pow_bits":8,
-                "min_worker_version":"0.4.0","rate_limit_per_minute":1000})
+                "min_worker_version":"0.4.1","rate_limit_per_minute":1000})
     cfgp=tmp/"server.json";cfgp.write_text(json.dumps(cfg))
     env=os.environ.copy();env.update({"GRID_CONFIG":str(cfgp),"GRID_DATA_DIR":str(tmp/"db"),
                                       "GRID_HOST":"127.0.0.1","GRID_PORT":str(port)})
@@ -99,10 +99,10 @@ def main():
                         "--cpu-percent","10"],check=True,timeout=120)
         runner=tmp/"runner.exe";shutil.copy2(CAND/"EnigmaGridUpdater.exe",runner)
 
-        man1=tmp/"success.json";sig1=manifest(ASSET,"0.4.0",man1,key_blob)
+        man1=tmp/"success.json";sig1=manifest(ASSET,"0.4.1",man1,key_blob)
         rc=run_updater(runner,install,state,base,ASSET,man1,sig1,12)
         assert rc==0,rc
-        assert wait_health(state.with_name("worker-health.json"),"0.4.0",10)
+        assert wait_health(state.with_name("worker-health.json"),"0.4.1",10)
 
         expected={x:hashlib.sha256((CAND/x).read_bytes()).hexdigest() for x in required}
         actual={x:hashlib.sha256((install/x).read_bytes()).hexdigest() for x in required}
@@ -114,7 +114,7 @@ def main():
         man2=tmp/"rollback.json";sig2=manifest(ASSET,"9.9.9",man2,key_blob)
         rc=run_updater(runner,install,state,base,ASSET,man2,sig2,5)
         assert rc==4,rc
-        assert wait_health(state.with_name("worker-health.json"),"0.4.0",10)
+        assert wait_health(state.with_name("worker-health.json"),"0.4.1",10)
         actual2={x:hashlib.sha256((install/x).read_bytes()).hexdigest() for x in required}
         assert actual2==expected
         stop_runtime(state)

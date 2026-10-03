@@ -8,6 +8,7 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import messagebox
+from file_state import atomic_write
 try:
     import winreg
 except ImportError:
@@ -16,7 +17,7 @@ import pystray
 from PIL import Image, ImageDraw
 
 APP_NAME="Enigma Volunteer Grid"
-APP_VERSION="0.4.0"
+APP_VERSION="0.4.1"
 BG="#0b1020";CARD="#131c31";CARD2="#18233c";TEXT="#f4f7fb";MUTED="#98a6c2"
 ACCENT="#55d6ff";ACCENT2="#7768ff";GREEN="#62d99b";AMBER="#f4b860";RED="#ff6b7a"
 
@@ -38,10 +39,7 @@ RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME="EnigmaVolunteerGrid"
 
 def atomic_json(path,obj):
-    path.parent.mkdir(parents=True,exist_ok=True)
-    tmp=path.with_suffix(path.suffix+".tmp")
-    tmp.write_text(json.dumps(obj,separators=(",",":")),encoding="utf-8")
-    tmp.replace(path)
+    atomic_write(path,json.dumps(obj,separators=(",",":")).encode("utf-8"))
 
 def load_json(path,default):
     try:return json.loads(path.read_text(encoding="utf-8"))

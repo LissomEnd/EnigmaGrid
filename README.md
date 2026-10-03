@@ -26,6 +26,10 @@ The CPU slider sets a computation-thread budget. The GPU slider sets a work/rest
 Public leaderboard credit is optional and is off by default. Read the [privacy policy](PRIVACY.md) before joining. Computing uses electricity and may increase fan noise; choose limits appropriate for your device.
 
 ## Validation and credit
+Need help or found a problem? [Open an issue](https://github.com/LissomEnd/EnigmaGrid/issues/new/choose)
+or read the [troubleshooting guide](SUPPORT.md). Security vulnerabilities should
+be reported privately using the repository's Security tab.
+
 Work is issued as deterministic units with crash-safe leases. Unexpected shutdown or network loss does not damage the campaign; expired work is requeued.
 
 Final credit requires independent reproduction. The default policy is 2-of-2 agreement; disagreement expands validation and can enter manual review. Invalid work receives no credit, repeated serious failures reduce trust, and devices can be quarantined.

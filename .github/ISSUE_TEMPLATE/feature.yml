@@ -1,0 +1,18 @@
+name: Feature or accessibility request
+description: Suggest an improvement to make volunteering easier.
+title: "[Request] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Explain the task or accessibility barrier, without including personal information.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+    validations:
+      required: true
