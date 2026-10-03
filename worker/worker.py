@@ -24,7 +24,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.4.1"
+VERSION="0.4.2"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))

@@ -69,7 +69,7 @@ def main():
     assert actual==expected,(actual,expected)
     u=UNINSTALL_BASE+"\\"+app_id
     assert exists_key(u)
-    assert reg_value(u,"DisplayVersion")=="0.4.1"
+    assert reg_value(u,"DisplayVersion")=="0.4.2"
     data.mkdir(parents=True,exist_ok=True)
     (data/"dummy-secret").write_text("test",encoding="utf-8")
 
