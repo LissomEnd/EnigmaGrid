@@ -1,0 +1,23 @@
+name: Public service check
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-https:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check service from outside the private network
+        shell: python
+        run: |
+          import json, urllib.request
+          base = 'https://enigma-grid.tail40f219.ts.net'
+          for path in ['/health', '/api/public/status', '/']:
+              with urllib.request.urlopen(base + path, timeout=30) as response:
+                  assert response.status == 200
+                  assert response.headers.get('Strict-Transport-Security')
+                  assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+                  body = response.read(1048576)
+                  if path == '/health':
+                      assert json.loads(body)['ok']
+                  print(path, response.status, len(body), 'bytes')
