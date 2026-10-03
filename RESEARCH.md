@@ -230,3 +230,10 @@ decrypt. The unsuccessful output is not a plaintext crib. Neither the nearby
 solved messages' daily key nor the surviving indicator notes justify restricting
 the target to Potsdam settings; recovering Thetis key material would require
 additional historical evidence.
+
+`tests/test_crib_exhaustive.py` adds an independent enumeration oracle for small
+domains: all zero/one-cable plugboards across two supplied mechanical cores,
+with clean, substitution and omission models. All 24 cases match the solver's
+complete candidate sets. The oracle shares the reference Enigma simulator but
+does not use CSP propagation or board completion. This checks finite low-cable
+domains; it is not evidence of practical full-space ten-cable recovery.
