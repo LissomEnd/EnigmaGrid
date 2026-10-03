@@ -11,6 +11,9 @@ from search.research_program import job_at,VERSION
 from search.crib_pilot import execute
 from search.bounded_crib import digest
 
+class TimeBudgetExpired(Exception):
+    """The in-flight job must be retried; it has no completed receipt."""
+
 def atomic(path,value):
     tmp=path.with_suffix('.tmp')
     with tmp.open('w',encoding='utf-8') as f:
@@ -30,7 +33,9 @@ def run(proposal,state_dir,*,max_jobs=8,max_seconds=30,executor=execute):
         checkpoint=folder/'checkpoint.json'
         state=json.loads(checkpoint.read_text()) if checkpoint.exists() else dict(manifest=manifest,next_ordinal=0)
         if state['manifest']!=manifest:raise ValueError('Proposal changed; use a separate state directory')
-        start=time.monotonic();processed=0;resumed=0;unknown=0
+        start=time.monotonic();processed=0;resumed=0;unknown=0;interrupted=False
+        def check_time(done,total):
+            if time.monotonic()-start>=max_seconds:raise TimeBudgetExpired()
         while processed+resumed<max_jobs and time.monotonic()-start<max_seconds:
             ordinal=state['next_ordinal'];job=job_at(proposal,ordinal)
             path=folder/(job['id']+'.json')
@@ -40,14 +45,20 @@ def run(proposal,state_dir,*,max_jobs=8,max_seconds=30,executor=execute):
                     raise ValueError('Stored receipt integrity mismatch')
                 resumed+=1
             else:
-                receipt=executor(job)
+                try:
+                    receipt=executor(job,checkpoint=check_time)
+                    check_time(0,0)
+                except TimeBudgetExpired:
+                    interrupted=True
+                    break
                 record=dict(job=job,receipt=receipt,receipt_hash=digest(receipt))
                 atomic(path,record);processed+=1
             unknown+=int(not record['receipt']['complete'])
             state['next_ordinal']=ordinal+1;atomic(checkpoint,state)
         return dict(processed=processed,resumed=resumed,unknown_budget=unknown,
             next_ordinal=state['next_ordinal'],seconds=time.monotonic()-start,
-            production_changed=False,budget_note='Time budget checked between bounded jobs; one job may overshoot')
+            production_changed=False,interrupted_job=interrupted,
+            budget_note='Time checked between mechanical cores; one bounded core and checkpoint I/O may overshoot')
     finally:lock.unlink()
 
 if __name__=='__main__':

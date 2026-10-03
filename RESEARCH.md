@@ -141,7 +141,9 @@ wrap and do not repeat within a hypothesis. This does not establish non-overlap
 with the earlier random pilot or third-party searches.
 
 `scripts/run_research_program.py --proposal proposal.json --state-dir PRIVATE_DIR`
-runs at most eight offline jobs or 30 seconds by default, checked between jobs.
+runs at most eight offline jobs or 30 seconds by default, checked between
+mechanical cores. One bounded core and checkpoint I/O may exceed the time limit.
+An expired in-flight job saves no receipt and is retried on the next invocation.
 It stores hashed receipts and an atomic checkpoint, detects a changed proposal
 or corrupt stored receipt, and resumes after the last saved job. A concurrent
 runner is refused. After a crash a stale lock needs manual inspection; no
