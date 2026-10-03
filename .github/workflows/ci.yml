@@ -50,6 +50,8 @@ jobs:
         run: python tests/test_research_client.py
       - name: Experimental receipt recomputation
         run: python tests/test_research_validation.py
+      - name: Isolated research server validation
+        run: python tests/test_research_server.py
       - name: Prior crib scope comparison
         run: python tests/test_crib_overlap.py
       - name: Quarantine tests

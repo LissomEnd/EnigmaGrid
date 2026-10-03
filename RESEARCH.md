@@ -237,3 +237,10 @@ with clean, substitution and omission models. All 24 cases match the solver's
 complete candidate sets. The oracle shares the reference Enigma simulator but
 does not use CSP propagation or board completion. This checks finite low-cable
 domains; it is not evidence of practical full-space ten-cable recovery.
+
+The server validator supports an explicit `allow_experimental=True` argument
+for isolated one-job lease tests. It binds the receipt to the job in the lease
+configuration and recomputes it. The production HTTP path does not opt in and
+continues to reject this engine. No experimental campaign is scheduled by this
+change. Production integration still requires bounded asynchronous verification,
+client capability negotiation and scientific qualification.

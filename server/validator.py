@@ -102,8 +102,21 @@ def _event_candidate(c,lease,engine="event_stochastic_v1"):
                  "event":ev}
     }
     return clean
-def validate_result(engine,result,lease):
+def validate_result(engine,result,lease,*,allow_experimental=False):
     if not isinstance(result,dict): raise ValueError("result_not_object")
+    if engine=="bounded_crib_v1" and allow_experimental:
+        # Only isolated callers opt in. Production HTTP callers leave this
+        # disabled; do not perform an experimental search in their request path.
+        from search.research_validation import verify
+        if type(lease.get('start_unit')) is not int or type(lease.get('end_unit')) is not int or lease['end_unit']!=lease['start_unit']+1:
+            raise ValueError('experimental_lease_must_have_one_job')
+        if set(result)!={'receipt'}:raise ValueError('invalid_experimental_result')
+        job=lease['config']['research_job']
+        verify(job,result['receipt'])
+        # Preserve unknown-budget status; a matching receipt is not an
+        # exhaustive negative and this function itself never issues credit.
+        clean={'receipt':result['receipt']}
+        return clean,fingerprint(clean)
     if engine=="demo_hash":
         expected=_demo_expected(lease)
         if result.get("summary")!=expected["summary"]:
