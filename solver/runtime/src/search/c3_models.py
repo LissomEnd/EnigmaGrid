@@ -140,6 +140,12 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
     for i,a,b in edges:
         if not 0<=i<len(rows) or not 0<=a<26 or not 0<=b<26:raise ValueError('Invalid edge')
     nodes=0;cutoff=False;answers=[];seen=set()
+    def extend(p,a,b):
+        # Every state here is an involution already within max_pairs, created
+        # from the empty board by assign. Reapplying an existing edge adds no
+        # cable and needs neither a copy nor another full-board count.
+        if p[a]==b:return p
+        return assign(p,a,b,max_pairs)
     def search(p):
         nonlocal nodes,cutoff
         if cutoff:return
@@ -151,11 +157,11 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
             changed=False
             for i,a,b in edges:
                 if p[a]!=-1:
-                    q=assign(p,b,rows[i][p[a]],max_pairs)
+                    q=extend(p,b,rows[i][p[a]])
                     if q is None:return
                     changed|=q!=p;p=q
                 if p[b]!=-1:
-                    q=assign(p,a,rows[i][p[b]],max_pairs)
+                    q=extend(p,a,rows[i][p[b]])
                     if q is None:return
                     changed|=q!=p;p=q
             if not changed:break
@@ -167,8 +173,8 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
         for i,a,b in unresolved:
             values=[]
             for x in range(26):
-                q=assign(p,a,x,max_pairs)
-                if q is not None:q=assign(q,b,rows[i][x],max_pairs)
+                q=extend(p,a,x)
+                if q is not None:q=extend(q,b,rows[i][x])
                 if q is not None:values.append(q)
             if not values:return
             if not options or len(values)<len(options):options=values
