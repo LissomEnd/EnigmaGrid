@@ -427,12 +427,12 @@ def prune_private_data(con):
 def progress_payload(con):
     prune_private_data(con);expire_leases(con);refresh_campaign_completion(con)
     total=con.execute("""select coalesce(sum(s.end_unit-s.start_unit),0) n from segments s
-                         join campaigns c on c.id=s.campaign_id where c.status in ('running','complete')""").fetchone()["n"]
+                         join campaigns c on c.id=s.campaign_id where c.status in ('running','complete','paused')""").fetchone()["n"]
     done=con.execute("""select coalesce(sum(dr.end_unit-dr.start_unit),0) n from done_ranges dr
                         join segments s on s.id=dr.segment_id join campaigns c on c.id=s.campaign_id
-                        where c.status in ('running','complete')""").fetchone()["n"]
+                        where c.status in ('running','complete','paused')""").fetchone()["n"]
     pending=con.execute("""select count(*) n from validations v join segments s on s.id=v.segment_id
-                           join campaigns c on c.id=s.campaign_id where c.status='running'
+                           join campaigns c on c.id=s.campaign_id where c.status in ('running','paused')
                            and v.status='pending'""").fetchone()["n"]
     online_cut=now()-load_cfg().get("online_seconds",60)
     devs=con.execute("""select capabilities_json,settings_json from devices

@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const elements=new Map(),pending=[];
+let publicPayload={registration_open:true};
 function element(id){
  if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',disabled:false,hidden:false,className:'',events:{},
   addEventListener(name,fn){this.events[name]=fn;},querySelector(){return element('save-button');}});
@@ -12,7 +13,7 @@ function element(id){
 const context=vm.createContext({document:{getElementById:element},Intl,Number,String,Error,AbortSignal,
  CSS:{escape:x=>x},HTMLInputElement:class {},sessionStorage:{removeItem(){throw Error('Storage blocked');}},
  setTimeout(){},fetch(url,options){
-  if(url==='/api/public/status')return Promise.resolve({ok:true,json:async()=>({registration_open:true})});
+  if(url==='/api/public/status')return Promise.resolve({ok:true,json:async()=>publicPayload});
   return new Promise(resolve=>pending.push({url,options,resolve}));
  }});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../web/app.js'),'utf8'),context);
@@ -23,6 +24,10 @@ async function load(token='TEST-TOKEN'){
  element('dash').value=token;const task=execute('loadMe()');respond(pending.shift(),account);await task;
 }
 (async()=>{
+ publicPayload={registration_open:true,campaigns:[{status:'paused'}]};
+ await execute('refresh()');assert.match(element('launchState').textContent,/New work is paused/);
+ publicPayload={registration_open:true,campaigns:[{status:'running'}]};
+ await execute('refresh()');assert.match(element('launchState').textContent,/registration is open/);
  await load();assert.equal(element('accountActions').hidden,false);
  const first=execute('loadMe()');const delayed=pending.shift();
  execute('forget()');respond(delayed,account);await first;

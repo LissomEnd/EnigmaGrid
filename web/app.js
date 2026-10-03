@@ -11,7 +11,8 @@ async function refresh(){
   if(!r.ok)throw new Error('status '+r.status);
   const s=await r.json();live(true,'Coordinator online');
   $('downloadLink').hidden=!s.registration_open;
-  $('launchState').textContent=s.registration_open?'Public registration is open.':'Public registration is closed while the release is being prepared or maintained.';
+  const researchPaused=(s.campaigns||[]).some(c=>c.status==='paused') && !(s.campaigns||[]).some(c=>c.status==='running');
+  $('launchState').textContent=researchPaused?'Research validation in progress. New work is paused while the next search method is tested. Existing results and credits are preserved; no reinstall is needed.':(s.registration_open?'Public registration is open.':'Public registration is closed while the release is being prepared or maintained.');
   $('pct').textContent=(Number(s.progress_pct)||0).toFixed(3)+'%';
   $('done').textContent=fmt(s.completed_units);$('online').textContent=fmt(s.online_devices);
   $('pending').textContent=fmt(s.pending_validations);$('cpuOnline').textContent=fmt(s.online_cpu_devices);

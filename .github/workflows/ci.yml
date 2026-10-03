@@ -24,6 +24,10 @@ jobs:
         run: node tests/test_dashboard_controls.cjs
       - name: Consensus tests
         run: python tests/test_consensus_v2.py
+      - name: Scientific pause preserves accounting
+        run: python tests/test_campaign_pause.py
+      - name: Bounded crib recovery and uncertainty
+        run: python tests/test_bounded_crib.py
       - name: Quarantine tests
         run: python tests/test_quarantine_v2.py
       - name: Security tests
