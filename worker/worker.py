@@ -267,8 +267,10 @@ def publish_health(runtime, status=None):
 def client_summary(state_path):
     state=load_state(Path(state_path))
     hw=_HW or {}
-    base={"registered":bool(state),"hardware":{"cpu_count":hw.get("cpu_count",1),
-          "capabilities":hw.get("capabilities",[]),"gpus":hw.get("gpus",[])},
+    base={"registered":bool(state),"hardware":{"cpu_count":hw.get("cpu_count",os.cpu_count() or 1),
+          "capabilities":hw.get("capabilities",[]),"gpus":hw.get("gpus",[]),
+          "source":"local_probe" if _HW is not None else "not_probed",
+          "detection_complete":_HW is not None},
           "worker_version":VERSION}
     if not state:return base
     base["server"]=state.get("server","")
@@ -281,7 +283,13 @@ def client_summary(state_path):
         try:
             base["personal"]=post(state["server"],"/api/me",{"dashboard_token":token},timeout=10)
             for d in base["personal"].get("devices",[]):
-                if d["id"]==state.get("device_id"):base["settings"]=d["settings"]
+                if d["id"]==state.get("device_id"):
+                    base["settings"]=d["settings"]
+                    meta=d.get("meta",{})
+                    if _HW is None and meta.get("cpu_count"):
+                        base["hardware"]={"cpu_count":meta["cpu_count"],
+                            "capabilities":meta.get("capabilities",[]),"gpus":meta.get("gpus",[]),
+                            "source":"last_server_report","detection_complete":False}
         except Exception as e:base["personal_error"]=type(e).__name__
     return base
 
