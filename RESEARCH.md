@@ -195,3 +195,10 @@ Pauses and cooldown waits check controls every 50 ms; an active bounded core mus
 finish before controls are checked. GPU execution is unsupported. The production
 worker does not advertise or route this engine, and coordinator/validator
 integration remains a separate qualification gate.
+
+`search/research_validation.py` recomputes an experimental job and compares its
+entire JSON receipt, rejecting altered scope, counters, candidates and completion
+claims. Verification can be cancelled through the same checkpoint mechanism.
+Agreement on a budget cutoff stays `unknown_budget`, never a complete negative.
+This offline check issues no credit and reuses the search implementation: it is
+not independent validation of the algorithm, and is not a production endpoint.
