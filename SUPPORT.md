@@ -49,3 +49,21 @@ Use release 0.4.1 or later: 0.4.0 could restart after a temporary Windows lock o
 its status file. Network interruptions are retried and abandoned leases are
 reissued. If a current release repeatedly fails, open a bug report with a
 redacted error excerpt and your app version.
+
+## Checking for updates
+
+In version 0.4.3 and later, use **App updates → Check for updates**. The panel
+keeps the result visible while computation continues: checking, up to date,
+update available, downloading, postponed, ready to install, or an error.
+Choose Yes in the update window to download. Installation waits for the current
+job to finish. A postponed optional update can be reviewed by checking again.
+
+If checking fails, verify your Internet connection and retry; do not disable
+signature checks. Start or resume the worker if the panel asks you to do so.
+Earlier versions provide less feedback and may defer a manual check until the
+current job ends. The latest official installer is also available on the
+[release page](https://github.com/LissomEnd/EnigmaGrid/releases/latest).
+
+Adding scheduled work can lower the overall campaign progress percentage.
+Previously verified work and earned credit are retained. Progress measures
+scheduled units, not the probability that the message has been solved.

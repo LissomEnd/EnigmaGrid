@@ -1,11 +1,11 @@
 # Research qualification
 
-The existing exploratory campaign remains active while replacement methods are
-evaluated separately. Existing results and contribution records are preserved.
-No replacement campaign is qualified yet. Research qualification must not
-interrupt the current campaign before a tested replacement is ready to take over.
-An additional experimental campaign is being prepared alongside the existing
-campaign. It is not a replacement and has no demonstrated recovery advantage.
+The original exploratory campaign remains active; its results and contribution
+records are preserved. Version 0.4.3 supports an additional experimental crib
+campaign, now added to the grid. This is not a replacement and has no
+demonstrated recovery advantage. Its first production lot was reproduced by
+two separate Windows clients; the remaining work is queued behind the original
+campaign. Agreement establishes execution consistency, not research superiority.
 The constrained client supports bounded, indexed CPU jobs and preserves budget
 cutoffs as unknown results. Matching computations verify execution, not a
 historical decryption or exhaustive elimination outside the stated hypothesis.
@@ -58,7 +58,8 @@ An extended comparison at ten seconds per trial (six trials per heuristic,
 two historical prefixes) also yielded zero exact plaintext recoveries for both
 methods. Combined with the small target pilot, this does not demonstrate an
 advantage sufficient to replace the running campaign. Decision: keep v1 active;
-retain the new engine as a research prototype. No production transition occurred.
+do not claim superiority. The subsequent additive deployment does not change
+these negative qualification results.
 
 `scripts/prepare_research_campaign.py --output proposal.json` prepares an inert
 proposal with attributed crib windows, legal offsets, explicit work bounds,
@@ -73,20 +74,26 @@ are reproducible. An isolated target run on 2026-10-03 completed all 112 jobs
 in 94.29 seconds, with zero candidates and no budget cutoffs. This small pilot is
 for runtime and candidate-rate measurement; it cannot exclude the full domain.
 `search.crib_pilot` provides offline generation and execution, tested against a
-historical control. The proposal still requires overlap review against prior
-work, production integration and evidence supporting the conditional switch. It is not a replacement
-Windows release and cannot yet be assigned to existing volunteer clients.
+historical control. The inert proposal is separate from the bounded production
+work format shipped in Windows 0.4.3. Earlier clients do not receive this engine.
+The added schedule uses 1,388,391 indexed jobs of up to 128 cores, with finite
+search budgets and separate verification. Its 90-day planning horizon is a
+capacity assumption, not a promised duration or probability of success.
+Completed earlier C1/C2 job families are not rescheduled; different hypotheses
+can still revisit mechanical settings. External prior-work coverage is not
+completely certified.
 
 The current campaign's equal allocation across 0–3, 4–10 and 11–13 cables,
 17 event positions and mixed event models is exploratory, not an empirically
 validated allocation. Its 75,000 units do not exhaust the Enigma keyspace.
 
-Before a replacement receives volunteer compute it must have a versioned
+A replacement claiming demonstrated research superiority would require a versioned
 manifest, source-backed hypotheses, held-out historical controls, bounded
 resource use, independent replay, reproducible scope receipts, and measured
 recovery/false-positive behavior. Deployment also requires worker/validator
-compatibility tests. These research functions are deliberately not routed by
-the public worker. No new Windows release is implied by their presence.
+compatibility tests. The bounded production adapter has passed routing,
+old-client exclusion, receipt replay and independent-replica tests. Other
+research engines remain isolated from volunteer execution.
 
 Background: [target record and indicator analysis](https://enigma.hoerenberg.com/index.php?cat=Unbroken&page=P1030680),
 [prior HELUT work](https://github.com/Digital-Defiance/HELUT/blob/main/writeup.md),

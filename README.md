@@ -4,8 +4,10 @@ Volunteer-computing platform for the unresolved P1030680 Naval Enigma M4 message
 
 Help investigate a historical ciphertext by donating spare computing time. This is an independent community project. No decryption has been established by this project.
 
-The current exploratory campaign remains active while a replacement is evaluated
-separately. See [research qualification](RESEARCH.md) for methods and limitations.
+The original exploratory campaign remains active. An additional experimental
+crib campaign has been added, with an independently verified initial lot and
+its continuation queued behind the original work. It has no demonstrated
+recovery advantage. See [research qualification](RESEARCH.md) for limitations.
 
 ## For volunteers
 
@@ -53,7 +55,7 @@ Windows client credentials are encrypted with DPAPI. Server-side device, contrib
 
 Updates use an Ed25519-signed manifest, SHA-256/size verification, safe-boundary application, mandatory-version enforcement and automatic rollback after a failed health check.
 
-The Lenovo coordinator binds only to `127.0.0.1:8765`. Public access is designed exclusively through Tailscale Funnel HTTPS, so no router port-forward or home public IP is exposed.
+Volunteers connect to the bundled public HTTPS endpoint. No private network access is required.
 
 ## Research and release status
 
