@@ -216,3 +216,17 @@ Broad uniform scheduling is therefore not yet a justified replacement campaign;
 stronger hypothesis evidence, domain reduction or substantial acceleration is
 needed, alongside successful recovery benchmarks. The existing campaign stays
 active while this research remains isolated.
+
+### Historical key-network constraint
+
+The [target's indicator analysis](https://enigma.hoerenberg.com/index.php?cat=Unbroken&page=P1030680)
+tentatively assigns it to Thetis and describes unsuccessful Potsdam attempts.
+`tests/test_indicator_replay.py` reproduces those reported computations with the
+original VCCH rings, plus the separate P1030690 indicator example documented in
+the [Kenngruppen explanation](https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=The+Kenngruppen+System).
+Using original written positions with the solved fixtures' AACU rings is invalid.
+These checks support the transcription and simulator convention, not a target
+decrypt. The unsuccessful output is not a plaintext crib. Neither the nearby
+solved messages' daily key nor the surviving indicator notes justify restricting
+the target to Potsdam settings; recovering Thetis key material would require
+additional historical evidence.

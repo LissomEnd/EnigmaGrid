@@ -30,6 +30,8 @@ jobs:
         run: python tests/test_bounded_crib.py
       - name: Historical bounded recovery
         run: python tests/test_historical_recovery.py
+      - name: Historical indicator provenance
+        run: python tests/test_indicator_replay.py
       - name: Offline research proposal gates
         run: python tests/test_research_plan.py
       - name: Experimental search receipts
