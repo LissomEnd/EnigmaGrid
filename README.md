@@ -4,9 +4,8 @@ Volunteer-computing platform for the unresolved P1030680 Naval Enigma M4 message
 
 Help investigate a historical ciphertext by donating spare computing time. This is an independent community project. No decryption has been established by this project.
 
-**Research validation pause:** new search work is currently paused while the
-replacement campaign is evaluated. Existing results and credits are preserved.
-Clients can stay installed and wait; see [research qualification](RESEARCH.md).
+The current exploratory campaign remains active while a replacement is evaluated
+separately. See [research qualification](RESEARCH.md) for methods and limitations.
 
 ## For volunteers
 Download `EnigmaGridSetup.exe` from [official releases](https://github.com/LissomEnd/EnigmaGrid/releases), run it, choose a display name and set your resource limits. The Windows x64 installer includes the runtime; Python, administrator rights and manual server configuration are not required. Only download a published release, not an unfinished development build.

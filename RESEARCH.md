@@ -1,8 +1,9 @@
 # Research qualification
 
-The exploratory campaign is paused for scientific validation. Existing results
-and contribution records are preserved. Connected clients can remain installed;
-they will wait for eligible work. No replacement campaign is qualified yet.
+The existing exploratory campaign remains active while replacement methods are
+evaluated separately. Existing results and contribution records are preserved.
+No replacement campaign is qualified yet. Research qualification must not
+interrupt the current campaign before a tested replacement is ready to take over.
 
 Two separate research engines now support evaluation:
 
