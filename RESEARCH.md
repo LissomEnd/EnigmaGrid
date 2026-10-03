@@ -172,6 +172,12 @@ Mapping matching placements to completed, independently checked key-domain
 receipts remains necessary before removing work. No external source code was
 executed and no third-party claim of a solution is adopted.
 
+The optional `--execution-log` maps exact text/offset pairs to reported log rows,
+retaining line numbers and a source hash. The pinned VIII-fast log maps to 22 of
+our 112 placements. Its middle ring is fixed as well as its restricted rotor
+orders. No key-domain exclusions follow: reported execution and heuristic
+rejection do not establish an independently verified exhaustive negative.
+
 ### Experimental job safety
 
 The offline crib executor validates the alphabet, placement, cable count, unique
