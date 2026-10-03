@@ -16,6 +16,11 @@ def hypotheses(proposal):
     if not rows:raise ValueError('Empty hypothesis set')
     return sorted(rows)
 
+def job_count(proposal, chunk=128):
+    if type(chunk) is not int or not 1<=chunk<=128:
+        raise ValueError('Invalid chunk')
+    return len(hypotheses(proposal))*((DOMAIN+chunk-1)//chunk)
+
 def core_indices(identity, start, count):
     if type(start) is not int or type(count) is not int or start<0 or not 1<=count<=128 or start+count>DOMAIN:
         raise ValueError('Invalid finite range')

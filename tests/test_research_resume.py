@@ -41,3 +41,22 @@ with tempfile.TemporaryDirectory() as d:
     result=run(p,d,max_jobs=1,executor=fake)
     assert result['next_ordinal']==1 and calls[-1]==attempts[0]
 print('RESEARCH_PROGRAM_RESUME_AND_INTEGRITY_OK')
+
+# A small finite domain exercises the last partial chunk and restart at its end.
+with tempfile.TemporaryDirectory() as d, patch('search.research_program.DOMAIN',129):
+    tiny=dict(p,hypotheses=[dict(text='TEST',legal_clean_offsets=[0])])
+    before=len(calls)
+    result=run(tiny,d,max_jobs=8,executor=fake)
+    assert result['processed']==2 and result['schedule_exhausted']
+    assert result['unknown_budget']==2, 'Schedule exhaustion must not certify unknown work'
+    saved=Path(d,'checkpoint.json').read_bytes()
+    again=run(tiny,d,max_jobs=8,executor=fake)
+    assert again['processed']==0 and again['schedule_exhausted'] and len(calls)==before+2
+    assert Path(d,'checkpoint.json').read_bytes()==saved
+    for ordinal in (-1,True,3):
+        state=json.loads(saved);state['next_ordinal']=ordinal
+        Path(d,'checkpoint.json').write_text(json.dumps(state))
+        try:run(tiny,d,executor=fake)
+        except ValueError:pass
+        else:raise AssertionError('Invalid checkpoint accepted')
+print('FINITE_SCHEDULE_END_AND_NO_REPLAY_OK')

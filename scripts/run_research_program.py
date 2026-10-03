@@ -7,7 +7,7 @@ import argparse,json,math,os,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'solver/runtime/src'))
-from search.research_program import job_at,VERSION
+from search.research_program import job_at,job_count,VERSION
 from search.crib_pilot import execute
 from search.bounded_crib import digest
 
@@ -33,10 +33,14 @@ def run(proposal,state_dir,*,max_jobs=8,max_seconds=30,executor=execute):
         checkpoint=folder/'checkpoint.json'
         state=json.loads(checkpoint.read_text()) if checkpoint.exists() else dict(manifest=manifest,next_ordinal=0)
         if state['manifest']!=manifest:raise ValueError('Proposal changed; use a separate state directory')
+        total_jobs=job_count(proposal)
+        if type(state['next_ordinal']) is not int or not 0<=state['next_ordinal']<=total_jobs:
+            raise ValueError('Invalid checkpoint ordinal')
         start=time.monotonic();processed=0;resumed=0;unknown=0;interrupted=False
         def check_time(done,total):
             if time.monotonic()-start>=max_seconds:raise TimeBudgetExpired()
         while processed+resumed<max_jobs and time.monotonic()-start<max_seconds:
+            if state['next_ordinal']==total_jobs:break
             ordinal=state['next_ordinal'];job=job_at(proposal,ordinal)
             path=folder/(job['id']+'.json')
             if path.exists():
@@ -58,6 +62,8 @@ def run(proposal,state_dir,*,max_jobs=8,max_seconds=30,executor=execute):
         return dict(processed=processed,resumed=resumed,unknown_budget=unknown,
             next_ordinal=state['next_ordinal'],seconds=time.monotonic()-start,
             production_changed=False,interrupted_job=interrupted,
+            schedule_exhausted=state['next_ordinal']==total_jobs,total_jobs=total_jobs,
+            exhaustion_note='All scheduled jobs visited does not certify coverage: inspect unknown/cutoff receipts',
             budget_note='Time checked between mechanical cores; one bounded core and checkpoint I/O may overshoot')
     finally:lock.unlink()
 
