@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import ctypes
 import hashlib
 import ipaddress
@@ -101,6 +101,9 @@ class UpdateManager:
         self.stop_requested=False
         self.pending=None
         self.last_error=None
+        self.status_path=self.state_path.with_name("update_status.json")
+        self.request_path=self.state_path.with_name("check-update-request")
+        self.manual_check=False
 
     def start(self):
         if self.thread and self.thread.is_alive():return
@@ -109,19 +112,32 @@ class UpdateManager:
     def shutdown(self):
         self.stop_event.set();self.wake.set()
 
+    def report(self,status,message):
+        save_json(self.status_path,{"status":status,"message":message,"checked_at":time.time(),"current_version":self.current_version})
+
     def force_check(self):
         self.wake.set()
 
     def _loop(self):
-        first=True
+        next_check=0
         while not self.stop_event.is_set():
-            if not first:
-                interval=max(900,int(self.cfg.get("check_interval_seconds",21600)))
-                self.wake.wait(interval);self.wake.clear()
-                if self.stop_event.is_set():break
-            first=False
-            try:self.check_once()
-            except Exception as e:self.last_error=repr(e)
+            requested=self.request_path.exists()
+            if requested:
+                self.request_path.unlink(missing_ok=True)
+                self.manual_check=True
+            if requested or self.wake.is_set() or time.monotonic()>=next_check:
+                self.wake.clear()
+                try:
+                    if self.manual_check:
+                        self.local_state.pop("dismissed_version",None)
+                    self.manual_check=False
+                    self.check_once()
+                    self.last_error=None
+                except Exception as e:
+                    self.last_error=repr(e)
+                    self.report("error","Could not check or verify the update. Check your connection and retry. Your current installation is unchanged.")
+                next_check=time.monotonic()+max(900,int(self.cfg.get("check_interval_seconds",21600)))
+            self.stop_event.wait(1)
 
     def resolve_repo(self):
         repo=str(self.cfg.get("github_repo","")).strip()
@@ -143,8 +159,14 @@ class UpdateManager:
         return rel
 
     def check_once(self):
+        if self.apply_requested:
+            self.report("ready","A verified update is ready. Installation will start after the current job finishes.")
+            return self.pending
+        self.report("checking","Checking GitHub for a signed update...")
         rel=self._release()
-        if not rel:return None
+        if not rel:
+            self.report("error","Update source unavailable. Please retry later.")
+            return None
         assets={a.get("name"):a for a in rel.get("assets",[]) if isinstance(a,dict)}
         mn=self.cfg.get("manifest_name","update-manifest.json")
         sn=self.cfg.get("signature_name","update-manifest.sig")
@@ -159,11 +181,16 @@ class UpdateManager:
         if int(manifest.get("schema",0))!=1:raise ValueError("unsupported_update_schema")
         version=str(manifest.get("version",""))
         if not re.fullmatch(r"\d+\.\d+\.\d+",version):raise ValueError("invalid_update_version")
-        if version_tuple(version)<=version_tuple(self.current_version):return None
+        if version_tuple(version)<=version_tuple(self.current_version):
+            self.report("current",f"You are up to date — version {self.current_version}.")
+            return None
         repo=self.resolve_repo()
         if manifest.get("repository") not in (None,repo):raise ValueError("manifest_repository_mismatch")
         mandatory=manifest_is_mandatory(manifest,self.current_version)
-        if self.local_state.get("dismissed_version")==version and not mandatory:return None
+        if self.local_state.get("dismissed_version")==version and not mandatory:
+            self.report("available",f"Version {version} is available. Choose Check for updates to review it again.")
+            return None
+        self.report("available",f"Version {version} is available. Choose Yes or No in the update window.")
         accepted=prompt_update(version,mandatory,manifest.get("notes",""))
         if not accepted:
             if mandatory:
@@ -171,11 +198,14 @@ class UpdateManager:
             else:
                 self.local_state["dismissed_version"]=version
                 save_json(self.local_state_path,self.local_state)
+            self.report("deferred", "Required update declined; stopping safely." if mandatory else f"Version {version} postponed. You can check again whenever you are ready.")
             return {"version":version,"accepted":False,"mandatory":mandatory}
+        self.report("downloading",f"Downloading version {version} and verifying its signature. You can continue contributing.")
         staged=self._download_asset(rel,manifest,mdata,sig)
         with self.lock:
             self.pending=staged
             self.apply_requested=True
+        self.report("ready",f"Version {version} is verified and ready. Installation will start after the current job finishes.")
         return staged
 
     def _download_asset(self,rel,manifest,mdata,sig):

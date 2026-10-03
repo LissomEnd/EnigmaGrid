@@ -136,6 +136,8 @@ class App:
         self.consent_var=tk.BooleanVar(value=False);self.autostart_var=tk.BooleanVar(value=get_autostart())
         self.status_var=tk.StringVar(value="Preparing...")
         self.status_detail=tk.StringVar(value="Checking local worker")
+        self.update_detail=tk.StringVar(value=f"Installed version {APP_VERSION}. Updates are optional unless marked required.")
+        self.update_requested_at=0
         self.build()
         threading.Thread(target=self.load_hardware,daemon=True).start()
         self.root.after(500,self.refresh_async)
@@ -234,13 +236,20 @@ class App:
     def render_dashboard(self):
         stats=tk.Frame(self.body,bg=BG);stats.pack(fill="x")
         self.stat_labels={}
-        for key,title in [("progress","Global progress"),("units","Verified units"),
-                          ("pending","Pending validation"),("trust","Trust")]:
+        for key,title in [("progress","Campaign progress"),("units","Your verified units"),
+                          ("pending","Awaiting checks"),("trust","Device trust")]:
             c=tk.Frame(stats,bg=CARD,highlightbackground="#263653",highlightthickness=1)
             c.pack(side="left",fill="both",expand=True,padx=(0 if not self.stat_labels else 8,0))
             self.label(c,title,8,MUTED,True).pack(anchor="w",padx=12,pady=(11,2))
             v=self.label(c,"--",16,TEXT,True);v.pack(anchor="w",padx=12,pady=(0,11))
             self.stat_labels[key]=v
+        updates=self.card(self.body);u=tk.Frame(updates,bg=CARD);u.pack(fill="x",padx=18,pady=14)
+        self.label(u,"App updates",14,TEXT,True).pack(anchor="w")
+        tk.Label(u,textvariable=self.update_detail,bg=CARD,fg=MUTED,wraplength=560,
+                 justify="left",font=("Segoe UI",10)).pack(anchor="w",pady=(8,10))
+        self.update_btn=self.button(u,"Check for updates",self.check_update)
+        self.update_btn.pack(anchor="w")
+
         controls=self.card(self.body);inner=tk.Frame(controls,bg=CARD);inner.pack(fill="x",padx=18,pady=16)
         top=tk.Frame(inner,bg=CARD);top.pack(fill="x")
         self.label(top,"Resource controls",14,TEXT,True).pack(side="left")
@@ -248,9 +257,10 @@ class App:
                        bg=CARD,fg=TEXT,selectcolor=CARD2,activebackground=CARD,activeforeground=TEXT).pack(side="right")
         self.resource_controls(inner)
         actions=tk.Frame(inner,bg=CARD);actions.pack(fill="x",pady=(14,0))
-        self.save_btn=self.button(actions,"Save limits",self.save_limits,True);self.save_btn.pack(side="left")
+        self.save_btn=self.button(actions,"Apply resource limits",self.save_limits,True);self.save_btn.pack(side="left")
         self.pause_btn=self.button(actions,"Pause",self.toggle_pause);self.pause_btn.pack(side="left",padx=8)
-        self.button(actions,"Check update",self.check_update).pack(side="left")
+        self.label(inner,"Pause keeps the app open. Stop safely finishes your current job before closing.",
+                   9,MUTED,wraplength=560,justify="left").pack(anchor="w",pady=(10,0))
 
         info=self.card(self.body);i=tk.Frame(info,bg=CARD);i.pack(fill="x",padx=18,pady=14)
         self.label(i,"Project",12,TEXT,True).pack(anchor="w")
@@ -355,8 +365,14 @@ class App:
         if hasattr(self,"pause_btn"):self.pause_btn.config(text="Resume" if paused else "Pause")
 
     def check_update(self):
-        save_control(check_update=True)
-        self.set_status("Checking update",ACCENT,"Worker will verify the signed release")
+        if control().get("stop_requested") or not STATE.exists():
+            self.update_detail.set("Start contributing or resume the worker to check for updates.")
+            return
+        self.ensure_worker()
+        self.update_requested_at=time.time()
+        atomic_write(STATE.with_name("check-update-request"),b"check")
+        self.update_detail.set("Checking for updates… Contacting GitHub and verifying the release signature.")
+        if hasattr(self,"update_btn"):self.update_btn.config(state="disabled",text="Checking…")
 
     def toggle_autostart(self):
         try:set_autostart(bool(self.autostart_var.get()))
@@ -375,8 +391,22 @@ class App:
             STATE.with_name("update-exit").unlink(missing_ok=True);self.quit_all();return
         if self.stopping and not is_alive():
             self.quit_all();return
-        if not self.setup_mode:self.apply_worker_status()
+        if not self.setup_mode:
+            self.apply_worker_status()
+            self.refresh_update_status()
         self.root.after(1000,self.poll_local)
+
+    def refresh_update_status(self):
+        status=load_json(STATE.with_name("update_status.json"),{})
+        recent=float(status.get("checked_at",0))>=self.update_requested_at
+        if recent and status.get("message"):
+            self.update_detail.set(status["message"])
+        pending=(not recent and self.update_requested_at>0) or (recent and status.get("status") in {"checking","downloading","ready"})
+        if not recent and self.update_requested_at and time.time()-self.update_requested_at>100:
+            self.update_detail.set("The worker has not answered yet. Check that it is running, then retry.")
+            pending=False
+        if hasattr(self,"update_btn"):
+            self.update_btn.config(state="disabled" if pending else "normal",text={"downloading":"Downloading...","ready":"Ready to install"}.get(status.get("status"),"Checking...") if pending else "Check for updates")
 
     def ensure_worker(self):
         if not STATE.exists() or control().get("stop_requested"):return
