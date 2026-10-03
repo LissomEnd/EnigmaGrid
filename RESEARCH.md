@@ -4,6 +4,8 @@ The existing exploratory campaign remains active while replacement methods are
 evaluated separately. Existing results and contribution records are preserved.
 No replacement campaign is qualified yet. Research qualification must not
 interrupt the current campaign before a tested replacement is ready to take over.
+Any replacement also requires the owner's explicit confirmation, even after
+technical qualification. No automatic switchover is authorized.
 
 Two separate research engines now support evaluation:
 
@@ -32,6 +34,33 @@ avoiding self-encryption conflicts produced zero candidates and no budget
 cutoffs. These small, synthetic samples are not estimates of real-target
 success probability. The constrained domain includes the true mechanical
 core; its identity and plugboard are not passed to the solver.
+
+Further controls on 2026-10-03: `tests/test_historical_recovery.py` recovered
+the historical key in all twelve bounded cases from P1030683 and P1030684,
+using 24/32-letter cribs, 128 supplied cores, and clean/injected-error models.
+Both messages share a daily key, so these are not twelve independent historical
+keys. Full source plaintext replay agrees in two local implementations.
+
+`scripts/benchmark_equal_time.py --seconds 2 --output comparison.json` runs
+twelve blind trials on those historical prefixes with the same wall-time
+budget per method (one bounded batch can overshoot). The observed result was
+zero recoveries. This short benchmark cannot establish general ineffectiveness.
+
+`scripts/prepare_research_campaign.py --output proposal.json` prepares an inert
+proposal with attributed crib windows, legal offsets, explicit work bounds,
+scope sizing and activation gates. It neither reads nor changes the live
+database and is not accepted as a production manifest. Five source windows
+yield 112 legal clean placements, spanning about 46.5 trillion core/hypothesis
+pairs if all canonical settings are explored. A full CPU-only sweep is not a
+practical allocation at measured prototype throughput; no such sweep is queued.
+The proposal includes a capped, deterministic CPU pilot: 112 jobs of 128 sampled
+mechanical cores each (14,336 core/hypothesis pairs). Job IDs and sampled cores
+are reproducible. It has not been executed on the target. This small pilot is
+for runtime and candidate-rate measurement; it cannot exclude the full domain.
+`search.crib_pilot` provides offline generation and execution, tested against a
+historical control. The proposal still requires overlap review against prior
+work, production integration and explicit user approval. It is not a replacement
+Windows release and cannot yet be assigned to existing volunteer clients.
 
 The current campaign's equal allocation across 0–3, 4–10 and 11–13 cables,
 17 event positions and mixed event models is exploratory, not an empirically

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "P1030683",
+    "source": "https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=P1030683",
+    "ciphertext": "PJVSRPPQDGKLDENENWLJLYMARZJGDKDPFTKRKWFBVZSVCNGILVUWQRVYDNQPJDHITDKODTSSOQAAJSJSGZWEXUJJWJAZEYCASCAQ",
+    "plaintext": "GRUPPENMARYMHMITUUUDREINULZWOVIRUNBUUGZWOFUNFDREIOCHTNACHTRAVEMUEVDEVVVUUUDREINULEINSVIRKKMARBACHKKM",
+    "key": {"reflector":"Bthin","greek":"Gamma","moving_rotors":["IV","III","VIII"],"rings":"AACU","positions":"FHFA","plugboard":["CH","EJ","NV","OU","TY","LG","SZ","PK","DI","QB"]}
+  },
+  {
+    "id": "P1030684",
+    "source": "https://enigma.hoerenberg.com/index.php?cat=The+U534+messages&page=P1030684",
+    "ciphertext": "RFBYWKIKELDCHBSXUNFJFSNRRVFWASXYLQCQFADYJXNTBMVLRDCGULOWHTBGWUSSOQHGAYEDKMJDNGVZNZFOXFKMIBKQNXFDWFIVGCYMJVQCKYQFBHYKZSCJ",
+    "plaintext": "VVVUUUVIRSOBENNULEINSXXMITUUUVIRSIBENNULZWOYVIRSIBENNULDREIYZWODREISECHSEINSYZWODREIDREIACHTEINSDREIOITNACHWZSTENPASSIRT",
+    "key": {"reflector":"Bthin","greek":"Gamma","moving_rotors":["IV","III","VIII"],"rings":"AACU","positions":"VYAA","plugboard":["CH","EJ","NV","OU","TY","LG","SZ","PK","DI","QB"]}
+  }
+]
