@@ -169,3 +169,13 @@ of constraint implication. Zero exclusions are authorized by this comparison.
 Mapping matching placements to completed, independently checked key-domain
 receipts remains necessary before removing work. No external source code was
 executed and no third-party claim of a solution is adopted.
+
+### Experimental job safety
+
+The offline crib executor validates the alphabet, placement, cable count, unique
+core indices and fixed maximum search budgets before doing any search. When a
+job includes an identity hash, altered work is rejected. A caller can provide a
+checkpoint callback between mechanical cores to enforce pause or cancellation;
+an exception stops execution without returning a completed receipt. This is not
+yet wired into the volunteer client. Cancellation cannot interrupt a core already
+being evaluated, whose search is bounded by the validated limits.

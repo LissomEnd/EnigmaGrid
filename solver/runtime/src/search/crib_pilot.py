@@ -43,8 +43,29 @@ def jobs(plan):
                 budgets=dict(node_limit=5000,board_limit=64,completion_limit=256,candidate_limit=2048))
             yield dict(job,id=digest(job))
 
-def execute(job):
+def validate_job(job):
+    if not isinstance(job,dict):raise ValueError('Job must be an object')
     if job.get('engine')!='bounded_crib_v1' or job.get('model')!='clean':raise ValueError('Unsupported pilot')
-    if len(job['core_indices'])>128:raise ValueError('Unbounded job')
+    for name in ('ciphertext','crib'):
+        text=job.get(name)
+        if not isinstance(text,str) or not 1<=len(text)<=72 or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' for c in text):
+            raise ValueError('Invalid '+name)
+    offset=job.get('offset')
+    if type(offset) is not int or not 0<=offset<=len(job['ciphertext'])-len(job['crib']):raise ValueError('Invalid offset')
+    indices=job.get('core_indices')
+    if not isinstance(indices,list) or not 1<=len(indices)<=128 or any(type(i) is not int or not 0<=i<DOMAIN for i in indices):
+        raise ValueError('Invalid bounded domain')
+    if len(set(indices))!=len(indices):raise ValueError('Duplicate cores')
+    if type(job.get('pairs')) is not int or not 0<=job['pairs']<=13:raise ValueError('Invalid cable count')
+    limits=dict(node_limit=5000,board_limit=64,completion_limit=256,candidate_limit=2048)
+    budgets=job.get('budgets')
+    if not isinstance(budgets,dict) or set(budgets)!=set(limits) or any(type(budgets[k]) is not int or not 1<=budgets[k]<=v for k,v in limits.items()):
+        raise ValueError('Invalid work budget')
+    if 'id' in job:
+        body={k:v for k,v in job.items() if k not in ('id','program','ordinal')}
+        if digest(body)!=job['id']:raise ValueError('Job identity mismatch')
+
+def execute(job,checkpoint=None):
+    validate_job(job)
     return search(job['ciphertext'],job['crib'],job['offset'],[core_at(i) for i in job['core_indices']],
-        model='clean',pairs=job['pairs'],**job['budgets'])
+        model='clean',pairs=job['pairs'],checkpoint=checkpoint,**job['budgets'])

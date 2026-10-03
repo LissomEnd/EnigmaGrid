@@ -68,7 +68,7 @@ def completions(partial, pairs, limit):
 
 def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
            pairs=10, node_limit=20000, board_limit=64, completion_limit=256,
-           candidate_limit=256):
+           candidate_limit=256, checkpoint=None):
     if any(type(v) is not int or v < 1 for v in (node_limit,board_limit,completion_limit,candidate_limit)):
         raise ValueError('Positive integer budgets required')
     if type(pairs) is not int or not 0 <= pairs <= 13: raise ValueError('Invalid cable count')
@@ -88,6 +88,7 @@ def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
     conflict=any(a==b for _,a,b in edges)
     if not conflict:
         for h in sorted(canonical):
+            if checkpoint is not None:checkpoint(visited,len(canonical))
             k=canonical[h]; visited+=1
             rows=crib_rows(k,offset,len(crib))
             local_edges=[(i-offset,a,b) for i,a,b in edges]
@@ -115,6 +116,7 @@ def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
                 # Unvisited cores must never turn into a negative certificate.
                 break
     complete=unknown==0 and (conflict or visited==len(canonical))
+    if checkpoint is not None:checkpoint(visited,len(canonical))
     return dict(engine=VERSION,scope_hash=digest(scope),cipher_sha256=sha256(ciphertext.encode()).hexdigest(),
         status='complete_candidates' if complete and candidates else ('complete_negative' if complete else 'unknown_budget'),
         complete=complete, historical_solution=False, core_count=len(canonical), visited_cores=visited,
