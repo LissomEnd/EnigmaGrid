@@ -202,3 +202,17 @@ claims. Verification can be cancelled through the same checkpoint mechanism.
 Agreement on a budget cutoff stays `unknown_budget`, never a complete negative.
 This offline check issues no credit and reuses the search implementation: it is
 not independent validation of the algorithm, and is not a production endpoint.
+
+### Capacity gate
+
+The horizon planner now includes at least two executions per job (search and
+separate recomputation), and reports scheduled coverage separately from recovery
+probability. At the pilot's approximately 250.73 core-hypothesis pairs/second,
+one device at 10% duty for 90 days could schedule about 97.5 million distinct
+pairs, at most 0.000210% of the 46.5 trillion-pair proposal. This is an illustrative
+upper bound: cutoffs, retries, overhead and heterogeneous devices reduce coverage.
+The pilot rate is not a measured fleet throughput or a reliable completion ETA.
+Broad uniform scheduling is therefore not yet a justified replacement campaign;
+stronger hypothesis evidence, domain reduction or substantial acceleration is
+needed, alongside successful recovery benchmarks. The existing campaign stays
+active while this research remains isolated.

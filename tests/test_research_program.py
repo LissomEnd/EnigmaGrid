@@ -22,6 +22,16 @@ for bad in (-1,DOMAIN):
 a=plan(p,days=90,cores_per_second=250);b=plan(p,days=180,cores_per_second=250)
 assert b['estimated_jobs']==a['estimated_jobs']*2
 assert not a['activation_allowed'] and a['production_changes']=='NONE'
+assert a['capacity_assumptions']['executions_per_job']==2
+assert a['coverage']['total_core_hypothesis_pairs']==n*DOMAIN
+assert a['coverage']['scheduled_pairs_upper_bound']==a['estimated_jobs']*128
+assert 0<a['coverage']['fraction_upper_bound']<1
+c=plan(p,days=90,cores_per_second=250,executions_per_job=4)
+assert abs(c['estimated_jobs']*2-a['estimated_jobs'])<=1
+assert c['coverage']['ideal_full_scope_years']==2*a['coverage']['ideal_full_scope_years']
+try:plan(p,cores_per_second=250,executions_per_job=1)
+except ValueError:pass
+else:raise AssertionError('Recomputation cost omitted')
 receipt=execute(job_at(p,0,chunk=4))
 assert receipt['core_count']==4 and receipt['complete']
 print('LONG_HORIZON_PREFIX_AND_NONOVERLAP_OK')
