@@ -23,6 +23,10 @@ import org.enigmagrid.core.EnigmaM4;
 public final class MainActivity extends Activity {
 
     private TextView status;
+    private final android.os.Handler uiHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable refreshControls;
+    private boolean startAfterNotification;
+
 
     private SeekBar gpuSlider;
     private final java.util.List<Button> gpuSteps=new java.util.ArrayList<>();
@@ -67,7 +71,7 @@ public final class MainActivity extends Activity {
 
         label(content, "Contribute on your terms", 22);
 
-        label(content, "Android 0.4.3 • experimental volunteer computing", 15);
+        label(content, "Android 0.4.4 • experimental volunteer computing", 15);
 
         label(content, "Help investigate an unresolved Enigma message. No decryption or scientific advantage is claimed.", 17);
 
@@ -165,10 +169,10 @@ public final class MainActivity extends Activity {
 
         Button contribute=new Button(this);contribute.setText("Start contributing");controls.addView(contribute);
         contribute.setOnClickListener(v->{
-            if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},41);return;}
+            if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED){startAfterNotification=true;requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},41);return;}
             startForegroundService(new android.content.Intent(this,ComputeService.class).setAction("work"));
         });
-        Button controlled=new Button(this);controlled.setText("Run controlled local checks");controls.addView(controlled);
+        Button controlled=new Button(this);controlled.setText("Run controlled local checks");diagnostics.addView(controlled);
 
         controlled.setOnClickListener(v->{
 
@@ -178,19 +182,25 @@ public final class MainActivity extends Activity {
 
         });
 
-        for(String action:new String[]{"pause","resume","stop"}) {
-
-            Button button=new Button(this);button.setText(action+" computation");controls.addView(button);
-
-            button.setOnClickListener(v->startService(new android.content.Intent(this,ComputeService.class).setAction(action)));
-
-        }
-
-        TextView workerState=label(controls,"Ready. Tap Start contributing to join the grid.",16);
-
-        Button refreshWorker=new Button(this);refreshWorker.setText("Refresh computation status");controls.addView(refreshWorker);
-
-        refreshWorker.setOnClickListener(v->workerState.setText(getSharedPreferences("worker-status",0).getString("state","Idle")));
+        Button pauseResume=new Button(this);pauseResume.setAllCaps(false);controls.addView(pauseResume);
+        Button stop=new Button(this);stop.setText("Stop");stop.setAllCaps(false);controls.addView(stop);
+        pauseResume.setOnClickListener(v->{
+            boolean paused=getSharedPreferences("worker-lifecycle",0).getBoolean("paused",false);
+            startService(new android.content.Intent(this,ComputeService.class).setAction(paused?"resume":"pause"));
+        });
+        stop.setOnClickListener(v->startService(new android.content.Intent(this,ComputeService.class).setAction("stop")));
+        TextView workerState=label(controls,"Ready to contribute",16);
+        refreshControls=()->{
+            boolean active=ComputeService.active;
+            boolean paused=getSharedPreferences("worker-lifecycle",0).getBoolean("paused",false);
+            contribute.setVisibility(active?View.GONE:View.VISIBLE);
+            pauseResume.setVisibility(active?View.VISIBLE:View.GONE);
+            stop.setVisibility(active?View.VISIBLE:View.GONE);
+            pauseResume.setText(paused?"Resume":"Pause");
+            controlled.setEnabled(!active);
+            workerState.setText(getSharedPreferences("worker-status",0).getString("state","Ready to contribute"));
+            uiHandler.postDelayed(refreshControls,500);
+        };
 
         label(diagnostics,"Background operation",22);
         label(diagnostics,"Keep the ongoing notification enabled. Allow unrestricted battery use and auto-start in your phone settings. Android may still stop work; open the app and tap Start after a force-stop or reboot.",15);
@@ -233,10 +243,17 @@ public final class MainActivity extends Activity {
 
         if(gpuQualification!=null)gpuQualification.interrupt();
 
+        uiHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
 
     }
 
+    @Override protected void onResume(){super.onResume();if(refreshControls!=null){uiHandler.removeCallbacks(refreshControls);uiHandler.post(refreshControls);}}
+    @Override protected void onPause(){uiHandler.removeCallbacksAndMessages(null);super.onPause();}
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+        super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(requestCode==41&&startAfterNotification){startAfterNotification=false;if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)startForegroundService(new android.content.Intent(this,ComputeService.class).setAction("work"));}
+    }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
 
     private LinearLayout card(LinearLayout parent){

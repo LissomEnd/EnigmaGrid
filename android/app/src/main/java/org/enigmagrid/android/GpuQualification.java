@@ -28,7 +28,7 @@ final class GpuQualification {
             if(flat.length!=length*26)throw new IllegalStateException("GPU row count");
             int[][] rows=new int[length][26];for(int i=0;i<length;i++)System.arraycopy(flat,i*26,rows[i],0,26);return rows;
         });
-        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts in "+((System.nanoTime()-start)/1000000)+" ms. Network worker integration remains pending.";
+        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts in "+((System.nanoTime()-start)/1000000)+" ms. GPU is ready for compatible grid work.";
         }
     }
 }

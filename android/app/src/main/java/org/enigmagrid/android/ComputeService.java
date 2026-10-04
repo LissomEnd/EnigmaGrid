@@ -13,6 +13,7 @@ import org.enigmagrid.core.WorkControl;
 public final class ComputeService extends Service {
 
     private static final int NOTIFICATION=41;
+    static volatile boolean active;
 
     private Thread worker;
     private PowerManager.WakeLock wakeLock;
@@ -82,7 +83,7 @@ public final class ComputeService extends Service {
         if(gridMode&&lifecycle.getBoolean("paused",false))control.pause();
         wakeLock=((PowerManager)getSystemService(POWER_SERVICE)).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"EnigmaGrid:compute");
         wakeLock.setReferenceCounted(false);wakeLock.acquire(120000);
-        stopping=false;outcome=null;handler.removeCallbacks(report);handler.post(report);
+        active=true;stopping=false;outcome=null;handler.removeCallbacks(report);handler.post(report);
 
         worker=new Thread(()->{
             String completed;
@@ -140,7 +141,7 @@ public final class ComputeService extends Service {
                 outcome=stopping?"Stopped":terminal;
                 getSharedPreferences("worker-status",0).edit().putString("state",outcome).apply();
                 lifecycle.edit().putBoolean("requested",false).commit();
-                worker=null;handler.removeCallbacks(report);stopSelf();
+                active=false;worker=null;handler.removeCallbacks(report);stopSelf();
             });
 
         },"controlled-compute");worker.start();return gridMode?START_STICKY:START_NOT_STICKY;
@@ -153,7 +154,7 @@ public final class ComputeService extends Service {
 
         Notification.Builder builder=new Notification.Builder(this,"compute").setSmallIcon(android.R.drawable.ic_popup_sync).setContentTitle(gridMode?"EnigmaGrid · contributing":"EnigmaGrid · local checks").setContentText(state).setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true);
 
-        for(String action:new String[]{"pause","resume","stop"}) {
+        for(String action:new String[]{getSharedPreferences("worker-lifecycle",0).getBoolean("paused",false)?"resume":"pause","stop"}) {
 
             PendingIntent command=PendingIntent.getService(this,action.hashCode(),new Intent(this,ComputeService.class).setAction(action),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
 
@@ -165,6 +166,6 @@ public final class ComputeService extends Service {
 
     }
 
-    @Override public void onDestroy(){destroyed=true;if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    @Override public void onDestroy(){active=false;destroyed=true;if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
 
 }
