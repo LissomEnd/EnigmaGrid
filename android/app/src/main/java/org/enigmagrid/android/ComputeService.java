@@ -49,6 +49,7 @@ public final class ComputeService extends Service {
 
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
 
+        MainActivity.computeStarting=false;
         SharedPreferences lifecycle=getSharedPreferences("worker-lifecycle",0);
         String action=intent==null?(lifecycle.getBoolean("requested",false)?"work":"stop"):intent.getAction();
 
@@ -164,6 +165,6 @@ public final class ComputeService extends Service {
 
     }
 
-    @Override public void onDestroy(){active=false;destroyed=true;if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    @Override public void onDestroy(){MainActivity.computeStarting=false;active=false;destroyed=true;if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
 
 }

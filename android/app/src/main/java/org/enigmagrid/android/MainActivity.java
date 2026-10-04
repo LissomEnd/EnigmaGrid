@@ -35,6 +35,15 @@ public final class MainActivity extends Activity {
     private Thread qualification;
 
     private Thread gpuQualification;
+    private static volatile boolean gpuCheckRunning;
+    static volatile boolean computeStarting;
+    private boolean localChecksBusy(){return gpuCheckRunning||(qualification!=null&&qualification.isAlive());}
+    private void startCompute(String action){
+        if(localChecksBusy()||computeStarting||ComputeService.active)return;
+        computeStarting=true;
+        try{startForegroundService(new android.content.Intent(this,ComputeService.class).setAction(action));}
+        catch(RuntimeException failure){computeStarting=false;throw failure;}
+    }
 
     @Override public void onCreate(Bundle state) {
 
@@ -112,14 +121,18 @@ public final class MainActivity extends Activity {
 
         Button gpuTest=new Button(this);gpuTest.setText("Test Vulkan computation");diagnostics.addView(gpuTest);
 
-        gpuTest.setOnClickListener(v->{gpuTest.setEnabled(false);gpuStatus.setText("Comparing Vulkan and CPU…");gpuQualification=new Thread(()->{
+        gpuTest.setOnClickListener(v->{if(ComputeService.active||computeStarting||localChecksBusy())return;gpuCheckRunning=true;gpuTest.setEnabled(false);gpuStatus.setText("Comparing Vulkan and CPU…");gpuQualification=new Thread(()->{
+            try{
 
-            String result;boolean passed=false;try{result=GpuQualification.run(getApplicationContext());passed=true;}catch(Exception|UnsatisfiedLinkError e){result="GPU check failed; CPU remains available. "+e.getClass().getSimpleName();}
+            String result;boolean passed=false,cancelled=false;try{result=GpuQualification.run(getApplicationContext());passed=true;}catch(java.util.concurrent.CancellationException e){cancelled=true;result="GPU check cancelled; previous qualification retained.";}catch(Exception|UnsatisfiedLinkError e){cancelled=Thread.currentThread().isInterrupted();result=cancelled?"GPU check cancelled; previous qualification retained.":"GPU check failed; CPU remains available. "+e.getClass().getSimpleName();}
+            cancelled|=Thread.currentThread().isInterrupted();
 
-            final boolean qualified=passed;getSharedPreferences("worker-settings",0).edit().putString("gpu_qualification",passed?GpuProcess.qualificationKey():"").apply();
+            if(!cancelled)getSharedPreferences("worker-settings",0).edit().putString("gpu_qualification",passed?GpuProcess.qualificationKey():"").apply();
+            final boolean qualified=GpuProcess.qualificationKey().equals(getSharedPreferences("worker-settings",0).getString("gpu_qualification",""));
 
             final String message=result;runOnUiThread(()->{if(!isDestroyed()){gpuCompatibility.setText(qualified?"Vulkan Compute qualified":"GPU check did not pass — CPU remains available");gpuStatus.setText(message);gpuTest.setEnabled(true);if(gpuSlider!=null){gpuSlider.setEnabled(qualified);for(Button step:gpuSteps)step.setEnabled(qualified);((TextView)gpuSlider.getTag()).setText("GPU: "+gpuSlider.getProgress()+"%"+(qualified?"":" — check required"));}}});
 
+        }finally{gpuCheckRunning=false;}
         },"gpu-qualification");gpuQualification.start();});
 
         status = label(diagnostics, "CPU engine checks have not run yet.", 17);
@@ -128,7 +141,7 @@ public final class MainActivity extends Activity {
 
         test.setOnClickListener(v -> {
 
-            if (qualification != null && qualification.isAlive()) return;
+            if (ComputeService.active||computeStarting||localChecksBusy()) return;
 
             test.setEnabled(false); status.setText("Checking CPU cipher and reference search receipts…");
 
@@ -174,16 +187,18 @@ public final class MainActivity extends Activity {
 
         Button contribute=new Button(this);contribute.setText("Start contributing");controls.addView(contribute);
         contribute.setOnClickListener(v->{
+            if(localChecksBusy()||computeStarting||ComputeService.active)return;
             if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED){startAfterNotification=true;requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},41);return;}
-            startForegroundService(new android.content.Intent(this,ComputeService.class).setAction("work"));
+            startCompute("work");
         });
         Button controlled=new Button(this);controlled.setText("Run controlled local checks");diagnostics.addView(controlled);
 
         controlled.setOnClickListener(v->{
+            if(localChecksBusy()||computeStarting||ComputeService.active)return;
 
             if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},41);return;}
 
-            startForegroundService(new android.content.Intent(this,ComputeService.class).setAction("qualify"));
+            startCompute("qualify");
 
         });
 
@@ -197,12 +212,17 @@ public final class MainActivity extends Activity {
         TextView workerState=label(controls,"Ready to contribute",16);
         refreshControls=()->{
             boolean active=ComputeService.active;
+            if(active)computeStarting=false;
+            boolean busy=localChecksBusy();
+            contribute.setEnabled(!busy&&!computeStarting);
+            gpuTest.setEnabled(!active&&!computeStarting&&!busy);
+            test.setEnabled(!active&&!computeStarting&&!busy);
             boolean paused=getSharedPreferences("worker-lifecycle",0).getBoolean("paused",false);
             contribute.setVisibility(active?View.GONE:View.VISIBLE);
             pauseResume.setVisibility(active?View.VISIBLE:View.GONE);
             stop.setVisibility(active?View.VISIBLE:View.GONE);
             pauseResume.setText(paused?"Resume":"Pause");
-            controlled.setEnabled(!active);
+            controlled.setEnabled(!active&&!computeStarting&&!busy);
             workerState.setText(getSharedPreferences("worker-status",0).getString("state","Ready to contribute"));
             uiHandler.postDelayed(refreshControls,500);
         };
@@ -278,7 +298,7 @@ public final class MainActivity extends Activity {
     @Override protected void onPause(){uiHandler.removeCallbacksAndMessages(null);super.onPause();}
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
         super.onRequestPermissionsResult(requestCode,permissions,results);
-        if(requestCode==41&&startAfterNotification){startAfterNotification=false;if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)startForegroundService(new android.content.Intent(this,ComputeService.class).setAction("work"));}
+        if(requestCode==41&&startAfterNotification){startAfterNotification=false;if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)startCompute("work");}
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
 
