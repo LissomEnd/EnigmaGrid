@@ -19,7 +19,8 @@ final class NetworkWorker {
     boolean acknowledgedWork(){return acknowledgedWork;}
     private final org.enigmagrid.core.BoundedCrib.RowProvider rows;
     NetworkWorker(CoordinatorClient client,CredentialStore store){this(client,store,null);}
-    NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows){this(client,store,rows,false);}
+    // Older coordinators return 404 once; the worker then retains single-lease mode.
+    NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows){this(client,store,rows,true);}
     NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows,boolean batchEnabled){this.batchEnabled=batchEnabled;this.rows=rows;this.client=client;this.heartbeat=client.fork();this.store=store;this.pending=store.pendingResults();}
     private Map<String,Object> metadata(){
         Map<String,Object> meta=Enrollment.metadata();
@@ -82,25 +83,26 @@ final class NetworkWorker {
             Map<String,Object> lease=(Map<String,Object>)item;WorkEnvelope.validate(lease);
             if(!(lease.get("id") instanceof String)||!(lease.get("work_token") instanceof String)||!ids.add((String)lease.get("id")))throw new IllegalArgumentException("Invalid lease credentials or duplicate lease");
         }
-        for(Object item:leases){
-        check(control);
-        Map<String,Object> lease=(Map<String,Object>)item;
         ScheduledExecutorService renew=Executors.newSingleThreadScheduledExecutor();
         renew.scheduleWithFixedDelay(()->{
             try{allowed(heartbeat.request("/api/heartbeat",object("meta",metadata()),token));}
             catch(IllegalStateException e){revoked=true;}
             catch(Exception e){/* Offline computation may finish; durable result waits for reconnection. */}
         },20,20,TimeUnit.SECONDS);
+        try {
+        for(Object item:leases){
+        check(control);
+        Map<String,Object> lease=(Map<String,Object>)item;
         phase="Computing assigned work";
         long started=System.nanoTime();Map<String,Object> result;
-        try{result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));}
-        finally{renew.shutdownNow();heartbeat.cancel();}
+        result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));
         Map<String,Object> receipt=(Map<String,Object>)result.get("receipt");
         Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Double.toString(Math.max(0.0,(System.nanoTime()-started)/1_000_000_000.0)),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
         phase="Saving completed result";
         queue.append(submission);
         check(control);submit(submission,token);queue.acknowledge((String)submission.get("lease_id"));acknowledgedWork=true;
         }
+        } finally {renew.shutdownNow();heartbeat.cancel();}
         return "Result acknowledged; awaiting independent verification";
     }
     private void check(BooleanSupplier control){if(revoked||Thread.currentThread().isInterrupted()||control.getAsBoolean())throw new CancellationException();}

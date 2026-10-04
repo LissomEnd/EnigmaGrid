@@ -163,3 +163,15 @@ Single-core jobs no longer create a redundant executor. Cancellation disconnects
 network sockets off the calling thread, and status distinguishes computation from
 network waits. The reported production UI stall has not yet been reproduced or
 confirmed resolved; these changes are not proof of its root cause.
+
+## Development after 0.4.9
+
+Normal clients now negotiate up to eight leases per request when the coordinator
+provides the batch endpoint. HTTP 404 selects and caches single-lease mode for
+that worker session; other failures retain their normal retry/error behavior.
+The production 0.4.9 APK still uses single assignments. This source change alone
+does not enable server batching or change campaign priorities or compute limits.
+
+One renewal scheduler covers the complete batch, including slow receipt uploads.
+A delayed-acknowledgment regression checks that heartbeat renewal continues while
+the completion response is pending; the scheduler is closed on success or failure.
