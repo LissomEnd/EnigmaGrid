@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--jdk", type=pathlib.Path, required=True)
 args = parser.parse_args()
 core = pathlib.Path(__file__).resolve().parent
-checks = ["CpuRowsChecks", "AdaptiveRowsChecks", "BatchRowsChecks", "ParallelChecks"]
+checks = ["ControlChecks", "CpuRowsChecks", "AdaptiveRowsChecks", "BatchRowsChecks", "ParallelChecks"]
 with tempfile.TemporaryDirectory(prefix="enigmagrid-accelerator-") as output:
     sources = list((core / "src/main/java/org/enigmagrid/core").glob("*.java"))
     subprocess.run([str(args.jdk / "bin/javac.exe"), "-d", output,
