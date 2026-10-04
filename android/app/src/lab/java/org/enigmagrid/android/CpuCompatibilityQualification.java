@@ -20,7 +20,7 @@ public final class CpuCompatibilityQualification extends Instrumentation {
             if(fixtures<=0)throw new IllegalStateException("Missing reference fixtures");
             result.putString("result","PASS CPU_COMPATIBILITY receipts="+fixtures+" sdk="+Build.VERSION.SDK_INT+" abi="+Build.SUPPORTED_ABIS[0]+" keystore_and_durable_queue=passed");
             status=Activity.RESULT_OK;
-        }catch(Throwable failure){result.putString("result","FAIL CPU_COMPATIBILITY "+failure.getClass().getSimpleName()+": "+failure.getMessage());}
+        }catch(Throwable failure){result.putString("result","FAIL CPU_COMPATIBILITY "+failure.getClass().getSimpleName()+": "+failure.getMessage());result.putString("trace",android.util.Log.getStackTraceString(failure));}
         finally{
             if(lab){CredentialStore storage=new CredentialStore(context,true);storage.pendingResults().clear();storage.clear();}
             finish(status,result);
