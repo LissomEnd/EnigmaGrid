@@ -347,3 +347,20 @@ The signed APK was installed over 0.4.12 on RedMagic; contribution resumed with
 LissomEnd 3 and the existing CPU/GPU settings. One new production receipt was
 independently replayed with an exact match. Signature continuity and all three
 native ABI layouts passed. Other physical devices remain unverified.
+
+## Android 0.4.14 deployment
+
+The experimental 0.4.14 prerelease prevents UI-started GPU diagnostics from
+overlapping contribution or local checks. Cancelling diagnostics preserves the
+previous GPU qualification. RedMagic UI instrumentation exercised both exclusion
+directions and cancellation. CI passed for release commit `45ee858`; the signed
+APK was installed in place and its foreground service resumed automatically,
+preserving account identity and resource preferences. This restart check alone
+does not prove a new completed receipt or sustained hardware utilization.
+
+The host regression `qualify_native_unavailable.py --jdk PATH` also executes the
+actual `VulkanBackend` class with an empty native-library path. It verifies CPU
+fallback at six window boundaries, avoids repeated failed GPU attempts, and
+checks that unavailable acceleration is not reported as active. This tests
+missing JNI support, not physical Vulkan driver compatibility. No new phone
+build is needed for this host-only regression.

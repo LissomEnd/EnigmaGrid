@@ -115,6 +115,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_accelerator.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_native_unavailable.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_constrained_telemetry.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_network_cycle.py --jdk "$jdk"
