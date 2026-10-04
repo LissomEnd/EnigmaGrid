@@ -22,15 +22,17 @@ final class UpdatePanel {
    String origin=activity.getSharedPreferences("worker-settings",0).getString("server","https://enigma-grid.tail40f219.ts.net");
    java.util.Map<String,Object> account=new CredentialStore(activity).load();if(account!=null)origin=(String)account.get("server");
    UpdateChecker.Result result=UpdateChecker.check(origin,installed());release=result;downloaded=null;
+   if(result.url!=null)try{downloaded=UpdateDownload.cached(activity,result);}catch(Exception invalid){/* Stale or incomplete cache is not offered. */}
+
    prefs.edit().putString("minimum",result.minimum).putLong("last_check",System.currentTimeMillis()).apply();
    ui(()->{busy=false;check.setEnabled(true);
     switch(result.state){
      case CURRENT:status.setText("Android app is up to date");break;
      case REQUIRED_UNAVAILABLE:status.setText("Update required ("+result.minimum+"). No compatible download is currently available. Account and results are retained.");break;
-     default:status.setText((result.state==UpdatePolicy.State.REQUIRED?"Required update: ":"Optional update: ")+result.version+"\n"+result.notes);action.setText("Download update");action.setVisibility(View.VISIBLE);
+     default:status.setText((result.state==UpdatePolicy.State.REQUIRED?"Required update: ":"Optional update: ")+result.version+"\n"+result.notes);action.setText(downloaded==null?"Download update":"Install update");action.setVisibility(View.VISIBLE);
       android.net.ConnectivityManager cm=(android.net.ConnectivityManager)activity.getSystemService(Context.CONNECTIVITY_SERVICE);
       android.net.NetworkCapabilities caps=cm.getNetworkCapabilities(cm.getActiveNetwork());
-      if(prefs.getBoolean("auto_download",false)&&caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))download();
+      if(downloaded==null&&prefs.getBoolean("auto_download",false)&&caps!=null&&caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))download();
     }
    });
   }catch(Exception e){ui(()->{busy=false;check.setEnabled(true);status.setText("Update check unavailable. Tap Check for updates to retry.");});}},"update-check").start();

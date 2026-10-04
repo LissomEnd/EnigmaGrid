@@ -25,6 +25,7 @@ public final class MainActivity extends Activity {
     private TextView status;
     private final android.os.Handler uiHandler=new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable refreshControls;
+    private Runnable showUpdates;
     private boolean startAfterNotification;
 
 
@@ -38,6 +39,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
 
         super.onCreate(state);
+        UpdateJob.schedule(getApplicationContext());
 
         LinearLayout content = new LinearLayout(this);
 
@@ -71,7 +73,7 @@ public final class MainActivity extends Activity {
 
         label(content, "Contribute on your terms", 22);
 
-        label(content, "Android 0.4.7 • experimental volunteer computing", 15);
+        label(content, "Android 0.4.8 • experimental volunteer computing", 15);
 
         label(content, "Help investigate an unresolved Enigma message. No decryption or scientific advantage is claimed.", 17);
 
@@ -207,11 +209,30 @@ public final class MainActivity extends Activity {
         label(diagnostics,"Keep the ongoing notification enabled. Allow unrestricted battery use and auto-start in your phone settings. Android may still stop work; open the app and tap Start after a force-stop or reboot.",15);
         Button battery=new Button(this);battery.setText("Open app battery settings");diagnostics.addView(battery);
         battery.setOnClickListener(v->startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))));
-        label(diagnostics,"App updates",22);
+        TextView updateHeading=label(diagnostics,"App updates",22);
         new UpdatePanel(this,diagnostics);
         new DashboardPanel(this,dashboard);
         new AccountPanel(this,account);
+        showUpdates=()->{
+            navigation.getChildAt(2).performClick();
+            scroll.post(()->{
+                android.graphics.Rect bounds=new android.graphics.Rect();
+                updateHeading.getDrawingRect(bounds);
+                scroll.offsetDescendantRectToMyCoords(updateHeading,bounds);
+                scroll.smoothScrollTo(0,bounds.top);
+            });
+        };
+        openRequestedSection(getIntent());
 
+    }
+
+    private void openRequestedSection(android.content.Intent intent){
+        if(intent!=null&&intent.getBooleanExtra("show_updates",false)&&showUpdates!=null){
+            intent.removeExtra("show_updates");showUpdates.run();
+        }
+    }
+    @Override protected void onNewIntent(android.content.Intent intent){
+        super.onNewIntent(intent);setIntent(intent);openRequestedSection(intent);
     }
 
     private void resourceSlider(LinearLayout parent,android.content.SharedPreferences preferences,String key,String title,int initial,boolean enabled) {

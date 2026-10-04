@@ -49,7 +49,9 @@ work. If a required version has no downloadable Android APK, the app reports it
 without deleting account data or pending results. APKs are checked for SHA-256,
 size, application ID, increasing version code and matching signing certificate.
 Installation uses Android's confirmation screen and per-app install permission.
-Background periodic update checking is not yet implemented.
+Version 0.4.8 schedules background checks approximately every six hours, subject
+to Android network/battery scheduling. Automatic Wi-Fi download is opt-in;
+installation still requires Android confirmation.
 
 Compute displays Start while idle, a single Pause/Resume action and Stop while
 active, and automatically refreshed status. Device contains diagnostic tests.
@@ -105,10 +107,11 @@ This validates that upgrade path on this device, not unattended installation.
 Android 8/API 26 is the configured minimum, not a claim of hardware testing on
 every supported API level. Mandatory-update policy and invalid-APK rejection
 have controlled tests; a production mandatory-version change was not performed
-for testing. Background periodic release checks and advanced volunteer account
-management are still pending.
+for testing. Background checks were exercised through Android JobScheduler on RedMagic
+(including a forced test invocation), not an elapsed six-hour reliability test.
+Advanced volunteer account management is still pending.
 
-## Unreleased throughput changes
+## Throughput changes (0.4.8)
 
 Search-local Vulkan batches pack up to 16 keys per dispatch and cache only the
 current bounded search (at most 128 keys). RedMagic qualification compared
@@ -128,5 +131,10 @@ without duplicate credit. The one-transaction-per-second ceiling remains.
 Additional host checks: compile `core/BatchRowsChecks.java` with the core sources
 and run `BatchRowsChecks`; run `core/qualify_network_cycle.py --jdk PATH`.
 Batch checks cover cache invalidation, cancellation, CPU fallback, disabled GPU,
-request order and dispatch telemetry. These changes are not in the published
-0.4.7 APK yet.
+request order and dispatch telemetry. These changes are included starting with Android 0.4.8.
+
+The update notification opens Device > App updates on both cold and warm app
+launch. A cached APK is rechecked against release size/SHA-256, package/version
+and installed signer before reuse. The periodic checker completed a real check
+on RedMagic with state CURRENT; optional/required policy branches additionally
+have controlled tests. These updater changes are included starting with Android 0.4.8.

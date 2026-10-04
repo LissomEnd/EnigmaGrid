@@ -21,6 +21,10 @@ public class UpdateChecks{
   Context c=new Context(new File(args[0]));String hash="9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a";
   UpdateChecker.Result r=new UpdateChecker.Result("https://github.com/LissomEnd/EnigmaGrid/releases/download/android-v0.4.6/EnigmaGrid-Android-0.4.6.apk",hash,4);
   File good=UpdateDownload.fetch(c,r,(x,y)->{});if(good.length()!=4)throw new AssertionError();checks++;
+  if(!UpdateDownload.cached(c,r).equals(good))throw new AssertionError();checks++;
+  try(FileOutputStream altered=new FileOutputStream(good)){altered.write(new byte[]{4,3,2,1});}
+  rejects(()->UpdateDownload.cached(c,r));
+  UpdateDownload.fetch(c,r,(x,y)->{});
   r.sha256="0".repeat(64);rejects(()->UpdateDownload.fetch(c,r,(x,y)->{}));r.sha256=hash;
   r.size=3;rejects(()->UpdateDownload.fetch(c,r,(x,y)->{}));r.size=5;rejects(()->UpdateDownload.fetch(c,r,(x,y)->{}));r.size=4;
   redirect="http://github.com/file.apk";rejects(()->UpdateDownload.fetch(c,r,(x,y)->{}));redirect="https://example.com/file.apk";rejects(()->UpdateDownload.fetch(c,r,(x,y)->{}));redirect=null;

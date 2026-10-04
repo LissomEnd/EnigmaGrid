@@ -14,6 +14,7 @@ import org.enigmagrid.core.UpdatePolicy;
 final class UpdateDownload {
  interface Progress {void received(long bytes,long total);}
  static synchronized File fetch(Context context,UpdateChecker.Result release,Progress progress)throws Exception {
+  if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Download cancelled");
   if(release.url==null||release.sha256==null)throw new IOException("No compatible APK available");
   File directory=new File(context.getCacheDir(),"updates");if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("Cannot create download folder");
   File partial=new File(directory,"update.part"),ready=new File(directory,"update.apk");
@@ -44,6 +45,14 @@ final class UpdateDownload {
    if(ready.exists()&&!ready.delete())throw new IOException("Cannot replace cached APK");
    if(!partial.renameTo(ready))throw new IOException("Cannot save verified APK");return ready;
   }finally{if(connection!=null)connection.disconnect();if(partial.exists())partial.delete();}
+ }
+ static synchronized File cached(Context context,UpdateChecker.Result release)throws Exception {
+  File file=new File(context.getCacheDir(),"updates/update.apk");
+  if(release.sha256==null||!file.isFile()||file.length()!=release.size)throw new IOException("No matching cached APK");
+  MessageDigest digest=MessageDigest.getInstance("SHA-256");
+  try(InputStream in=new FileInputStream(file)){byte[] buffer=new byte[65536];int n;while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();digest.update(buffer,0,n);}}
+  if(!hex(digest.digest()).equals(release.sha256))throw new IOException("Cached APK integrity check failed");
+  verifyPackage(context,file,release.version);return file;
  }
  @SuppressWarnings("deprecation")
  static void verifyPackage(Context context,File file,String expected)throws Exception {
