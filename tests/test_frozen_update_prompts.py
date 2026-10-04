@@ -97,6 +97,9 @@ def main():
         keyfile.write_bytes(key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
         context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(certfile,keyfile)
         routes={};requests=[]
+        # A busy scenario must acquire work before its update can be announced.
+        # Otherwise a foreground Yes/No dialog is exposed while the fixture waits.
+        release_ready=threading.Event()
         class Proxy(socketserver.StreamRequestHandler):
             def handle(self):
                 self.connection.settimeout(30)
@@ -112,7 +115,10 @@ def main():
                         if len(request)!=3 or request[0]!='GET':return
                         for _ in range(100):
                             if stream.readline(4096) in (b'\r\n',b'\n',b''):break
-                        path=request[1];requests.append(path);value=routes.get(path)
+                        path=request[1];requests.append(path)
+                        if path.endswith('/releases/latest') and not release_ready.wait(60):
+                            tls.sendall(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length:0\r\n\r\n');return
+                        value=routes.get(path)
                         if value is None:tls.sendall(b'HTTP/1.1 404 Not Found\r\nContent-Length:0\r\n\r\n');return
                         size=value.stat().st_size if isinstance(value,Path) else len(value)
                         tls.sendall(f'HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n'.encode())
@@ -139,6 +145,8 @@ def main():
         busy_case=os.environ.get('ENIGMA_TEST_UPDATE_BUSY')=='1'
         scenarios=[(True,False),(False,True)] if busy_case else [(False,False),(False,True),(True,False),(True,True)]
         for mandatory,accepted in scenarios:
+            release_ready.clear()
+            if not busy_case:release_ready.set()
             label=('mandatory' if mandatory else 'optional')+('-accept' if accepted else '-decline')
             case=tmp/label;install=case/'install';shutil.copytree(OLD,install)
             state=case/'user/client.json';state.parent.mkdir(parents=True)
@@ -164,17 +172,22 @@ def main():
             identity=hashlib.sha256(state.read_bytes()).hexdigest()
             log=(case/'worker.log').open('wb')
             worker=subprocess.Popen(args,env=clientenv,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
+            if busy_case:
+                def computing():
+                    if worker.poll() is not None:raise RuntimeError('Fixture worker exited before acquiring work')
+                    try:return json.loads(state.with_name('worker-health.json').read_text()).get('status')=='computing'
+                    except (OSError,ValueError):return False
+                wait_for(computing,30)
+                release_ready.set()
             print('WAITING_FOR_REAL_DIALOG',label,flush=True)
             hwnd,text=wait_for(lambda:dialog_for(install),90)
             assert ('REQUIRED' in text)==mandatory,text
             assert VERSION in text and 'ISOLATED LOCAL UPDATE TEST' in text
             if busy_case:
-                def computing():
-                    try:return json.loads(state.with_name('worker-health.json').read_text()).get('status')=='computing'
-                    except (OSError,ValueError):return False
-                wait_for(computing,30)
-            ctypes.windll.user32.PostMessageW.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_size_t,ctypes.c_ssize_t]
-            ctypes.windll.user32.PostMessageW(hwnd,0x111,6 if accepted else 7,0)
+                # A stale health file is insufficient: the lease must still be active.
+                with sqlite3.connect(tmp/'db/grid.sqlite3') as db:
+                    assert db.execute("select count(*) from leases where segment_id=? and status='leased'",(label,)).fetchone()[0]==1
+            respond_to_dialog(install,hwnd,accepted)
             if accepted:
                 assert wait_health(state.with_name('worker-health.json'),VERSION,180)
                 for name in ('EnigmaGridWorker.exe','EnigmaGrid.exe','EnigmaGridUpdater.exe'):
@@ -202,5 +215,16 @@ def main():
             except subprocess.TimeoutExpired:server.kill()
         if proxy:proxy.shutdown();proxy.server_close()
         shutil.rmtree(tmp,ignore_errors=True)
+
+def respond_to_dialog(install,expected_hwnd,accepted,*,lookup=None,post=None):
+    """Never answer another/replaced dialog; injectable for headless regression."""
+    current=(lookup or dialog_for)(install)
+    if not current or current[0]!=expected_hwnd:
+        raise RuntimeError('Isolated dialog dismissed or replaced before response; scenario is inconclusive')
+    if post is None:
+        post=ctypes.windll.user32.PostMessageW
+        post.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.c_size_t,ctypes.c_ssize_t]
+    if not post(expected_hwnd,0x111,6 if accepted else 7,0):
+        raise RuntimeError('Could not deliver response to isolated update dialog')
 
 if __name__=='__main__':main()

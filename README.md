@@ -98,6 +98,11 @@ hybrid worker results. Current physical validation covers one AMD GPU; concurren
 multiple-device execution has adapter coverage but awaits physical multi-GPU
 validation and a Windows installer release. No utilization or speedup guarantee.
 
-The Windows 0.4.4 build workflow and artifact attestation have passed. Final
-release tests remain in progress; this version is not yet a published Windows
-release and has not been deployed to participating Windows devices.
+The [Windows 0.4.4 stabilization candidate](https://github.com/LissomEnd/EnigmaGrid/releases/tag/v0.4.4)
+is published and installed on two participating Windows PCs. CI, frozen-worker
+computation, installer lifecycle and artifact-attestation checks passed; new
+production receipts have been independently verified. Extra bounded-search
+processes are limited by available RAM, with a serial fallback. Background
+process creation suppresses console windows. Sustained utilization remains under
+observation; an active-job native update-dialog test is inconclusive, so this
+candidate is not promoted to the automatic latest-release channel.

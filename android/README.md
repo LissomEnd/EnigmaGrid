@@ -214,15 +214,15 @@ optimization; it does not establish physical GPU compatibility or whole-job spee
 
 ### Qualification and remaining deployment limits
 
-The pending Windows constrained path uses reusable spawn processes with bounded
+The Windows 0.4.4 constrained path uses reusable spawn processes with bounded
 ordered batches. Host tests cover receipt parity, pause/resume preference changes,
 CPU disable, pool resize/reuse, and cleanup on normal or exceptional exit. Child
 processes enforce CPU duty; the parent avoids restricting their inherited CPU
-affinity. This has not yet been deployed or measured on the participating Windows
-devices. The locally packaged 0.4.4 worker passed standard and constrained self-tests.
-The Windows 0.4.4 build workflow and artifact attestation have passed. Final
-release tests remain in progress; it is not yet published, and installer/update
-qualification remains a separate gate.
+affinity. The stabilization candidate is published and installed on two Windows
+PCs. CI, frozen computation, installer lifecycle and artifact attestation passed.
+Memory limits now reduce the process count or select serial fallback. Sustained
+utilization and the active-job native update-dialog scenario remain open; it is
+not promoted to the automatic latest-release channel.
 
 Server lease responses can carry the control snapshot to avoid a redundant
 heartbeat on short Windows jobs, with a legacy fallback. Queue indexes have been
