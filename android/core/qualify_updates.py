@@ -31,6 +31,17 @@ public class UpdateChecks{
   c.pm.candidate.packageName="other.app";rejects(()->UpdateDownload.verifyPackage(c,good,"0.4.6"));c.pm.candidate.packageName="org.enigmagrid.android";
   c.pm.candidate.versionCode=3;rejects(()->UpdateDownload.verifyPackage(c,good,"0.4.6"));c.pm.candidate.versionCode=4;
   c.pm.candidate.signingInfo.values=new android.content.pm.Signature[]{new android.content.pm.Signature(new byte[]{2})};rejects(()->UpdateDownload.verifyPackage(c,good,"0.4.6"));
+  for(int api:new int[]{26,27,28,35}){
+   android.os.Build.VERSION.SDK_INT=api;
+   Context device=new Context(c.dir);
+   // Populate only the signature API available on this Android generation.
+   if(api<28){device.pm.installed.signingInfo=null;device.pm.candidate.signingInfo=null;}
+   else{device.pm.installed.signatures=null;device.pm.candidate.signatures=null;}
+   UpdateDownload.verifyPackage(device,good,"0.4.6");checks++;
+   if(api<28)device.pm.candidate.signatures=new android.content.pm.Signature[]{new android.content.pm.Signature(new byte[]{2})};
+   else device.pm.candidate.signingInfo.values=new android.content.pm.Signature[]{new android.content.pm.Signature(new byte[]{2})};
+   rejects(()->UpdateDownload.verifyPackage(device,good,"0.4.6"));
+  }
   if(new File(c.dir,"updates/update.part").exists())throw new AssertionError("Partial retained");
   System.out.println("PASS "+checks+" download/package checks (controlled transport and Android adapters)");
  }
