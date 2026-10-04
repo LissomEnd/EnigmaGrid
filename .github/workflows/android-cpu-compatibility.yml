@@ -49,12 +49,17 @@ jobs:
         env:
           API_LEVEL: ${{ matrix.api }}
         run: |
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/enigmagrid-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           test -c /dev/kvm
           sudo setfacl -m "u:$(id -un):rw" /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'emulator' 'platform-tools' "system-images;android-$API_LEVEL;google_apis;x86_64"
           "$ANDROID_HOME/emulator/emulator" -accel-check
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name enigmagrid-cpu --package "system-images;android-$API_LEVEL;google_apis;x86_64"
+          test -f "$ANDROID_AVD_HOME/enigmagrid-cpu.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx enigmagrid-cpu
       - name: Run CPU receipts and encrypted storage on emulator
         env:
           API_LEVEL: ${{ matrix.api }}
