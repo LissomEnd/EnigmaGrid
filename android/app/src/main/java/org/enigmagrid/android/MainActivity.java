@@ -206,7 +206,7 @@ public final class MainActivity extends Activity {
         };
 
         label(diagnostics,"Background operation",22);
-        label(diagnostics,"Keep the ongoing notification enabled. Allow unrestricted battery use and auto-start in your phone settings. Android may still stop work; open the app and tap Start after a force-stop or reboot.",15);
+        label(diagnostics,"Keep the ongoing notification enabled. Allow unrestricted battery use and auto-start in your phone settings. Previously running work attempts to resume after updates or reboot. Paused and stopped work stays idle. After a force-stop or blocked restart, open the app and tap Start.",15);
         Button battery=new Button(this);battery.setText("Open app battery settings");diagnostics.addView(battery);
         battery.setOnClickListener(v->startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))));
         TextView updateHeading=label(diagnostics,"App updates",22);

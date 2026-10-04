@@ -182,3 +182,12 @@ The update checker accepts an Android-specific minimum version from the coordina
 falling back to the shared minimum on older servers. This allows Android and Windows
 release requirements to evolve independently. No production minimum is raised by
 this client change; installation still requires Android confirmation.
+
+## Background resume in development
+
+A system receiver attempts to resume user-requested, unpaused computation after
+package replacement or completed boot. Stopped or paused sessions stay idle.
+OEM restrictions may reject the start; the app records a manual-resume message.
+Controlled adapter tests cover these decisions; physical reboot/update recovery
+is still awaiting device qualification. The released 0.4.10 does not include this
+receiver. Run `python android/core/qualify_resume.py --jdk PATH` from the repository.

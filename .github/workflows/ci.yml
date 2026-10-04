@@ -84,3 +84,14 @@ jobs:
         run: python tests/test_update_integrity.py
       - name: Update feedback and manual retry
         run: python tests/test_update_feedback.py
+      - name: Android lifecycle, update and network regressions
+        shell: pwsh
+        run: |
+          $jdk = $env:JAVA_HOME_17_X64
+          if (-not $jdk) { throw 'Java 17 is required for Android host checks' }
+          python android/core/qualify_resume.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_updates.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_network_cycle.py --jdk "$jdk"
+          exit $LASTEXITCODE
