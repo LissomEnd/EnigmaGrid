@@ -42,6 +42,14 @@ stack, so this is not a promise to release all allocated memory or prevent Andro
 from reclaiming the process. Controlled host tests cover the gate's recovery and
 Stop behavior; forced system-wide memory exhaustion has not been tested on a phone.
 
+The next build also explicitly excludes app state from Android 12+ cloud backup
+and device transfer. Credentials and pending receipts already use no-backup storage;
+GPU qualification, resource preferences and requested-work state must likewise not
+be inherited by another phone. Existing installations keep their local data when
+updated. Manifest/resource compilation and lint passed; a physical phone-to-phone
+transfer has not been tested. See Android's
+[backup rules](https://developer.android.com/identity/data/autobackup).
+
 ## Build
 
 Use JDK 17, Gradle 8.9, Android SDK 35, NDK 27.2.12479018 and CMake 3.22.1.
