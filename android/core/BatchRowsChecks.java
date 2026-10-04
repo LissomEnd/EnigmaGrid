@@ -11,6 +11,14 @@ public class BatchRowsChecks {
    int[] packed=RowBatch.pack(Collections.singletonList(key),2,16);int[][] cpu=BoundedCrib.cpuRows(key,2,16);
    for(int r=0;r<16;r++)reference.put(Arrays.toString(Arrays.copyOfRange(packed,625+r*9,634+r*9)),cpu[r]);
   }
+  for(int length:new int[]{1,2,3,16,71,72})for(int count:new int[]{1,2,16}){
+   List<BoundedCrib.Key> subset=keys.subList(0,count);int[] packed=RowBatch.pack(subset,72-length,length);
+   check(packed[0]==count*length&&packed.length==625+count*length*9,"boundary batch layout");
+   int[] flat=new int[count*length*26];
+   for(int k=0;k<count;k++){int[][] rows=BoundedCrib.cpuRows(subset.get(k),72-length,length);for(int r=0;r<length;r++)System.arraycopy(rows[r],0,flat,(k*length+r)*26,26);}
+   int[][][] unpacked=RowBatch.unpack(flat,count,length);
+   for(int k=0;k<count;k++)check(Arrays.deepEquals(unpacked[k],BoundedCrib.cpuRows(subset.get(k),72-length,length)),"boundary round trip");
+  }
   Clock clock=new Clock();int[] calls={0},duty={25};boolean[] stop={false};
   BatchedRows batch=new BatchedRows(packed->{
    calls[0]++;clock.now+=10000000;check(packed[0]<=16*72,"unbounded dispatch");int[] flat=new int[packed[0]*26];

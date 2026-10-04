@@ -224,3 +224,47 @@ heartbeat on short Windows jobs, with a legacy fallback. Queue indexes have been
 measured on an isolated database copy. These changes do not establish that the
 production validation backlog is resolved. Android physical GPU compatibility
 beyond the tested device, full release testing and deployment remain open.
+
+The pending on-device GPU qualification exercises batch sizes 1, 2 and 16 at
+window lengths 1, 2, 3, 16, 71 and 72, including windows ending at position 72.
+It compares GPU contacts against CPU results and checks full canonical receipts.
+The final CPU/GPU receipt comparisons now also honor thread interruption. Host
+batch tests cover packing and parity at the same boundaries; passing those tests
+does not qualify Vulkan execution on a device. Release Java compilation and lint
+are separate from these mathematical checks.
+
+Windows also retains a completed receipt locally before upload, using the same
+Windows DPAPI protection as enrollment state. On restart it retries that receipt
+before requesting more work, and removes it only after an explicit successful
+acknowledgement (including an idempotent duplicate). Network errors, malformed
+acknowledgements and coordinator/device identity mismatches retain the receipt.
+A rejected receipt currently blocks new work until investigated; it is never
+silently discarded. This protects process-restart recovery, not a guarantee
+against storage failure or sudden power loss.
+
+The Windows renewal thread now remains active through completion upload, instead
+of stopping when computation ends. A regression covers successful and failed
+uploads, saved-result retention and thread cleanup. Upload time is excluded from
+reported compute time. This source change is pending the coordinated deployment.
+
+Native release compilation has passed for `arm64-v8a`, `armeabi-v7a` and `x86_64`.
+Inspection of the generated Vulkan libraries confirms the corresponding ELF
+architectures and 16 KiB LOAD-segment alignment. Final APK ZIP alignment and
+execution on physical devices with different page sizes/drivers are separate
+release checks; compilation alone does not establish that compatibility.
+
+Run `python android/core/qualify_apk_layout.py path/to/app.apk` to inspect every
+packaged native library's ABI and ELF alignment and the ZIP alignment of stored
+libraries. The local consolidated qualification APK passes this check, Android
+`zipalign -c -P 16 4`, and signature verification with the existing release
+certificate. This artifact has not been installed or published as a new release;
+physical runtime and coordinated deployment gates remain open.
+
+The subsequent Android source change overlaps one receipt upload with the next
+computation in an assigned batch. Both results are saved before delivery; only
+the compute thread removes acknowledged receipts. At most two computed receipts
+are pending in this pipeline, and one upload is active. Renewal continues until
+the final acknowledgement. Host regressions require computation to advance while
+an upload is blocked and verify recovery of both receipts after the first upload
+fails. This change postdates the local APK layout check and needs a consolidated
+build and device performance measurement; no throughput gain is claimed yet.
