@@ -31,6 +31,37 @@ ABIs use the matching NDK `aarch64-linux-android26-clang++`,
 with `-std=c++17 -fsyntax-only android/app/src/main/cpp/vulkan_rows.cpp`.
 On Windows use `windows-x86_64` and the `.cmd` compiler wrappers.
 
+## Real GPU row parity without installing an APK
+
+`real_gpu_checks.cpp` includes the production backend and executes its actual
+`Compute::run` implementation. `NativeRowFixtures.java` generates CPU reference
+data for batches of 1, 2 and 16 keys with window lengths 1, 2, 3, 16, 71 and 72,
+ending at position 72. Three passes reuse the same native compute object. This
+checks 54 dispatches and 244,530 contacts; it is not a throughput benchmark or
+full app lifecycle test.
+
+Example preparation from the repository root on Linux with Java 17 and an NDK:
+
+```sh
+mkdir -p /tmp/enigmagrid-native/classes
+javac -d /tmp/enigmagrid-native/classes android/core/src/main/java/org/enigmagrid/core/*.java android/native-tests/NativeRowFixtures.java
+java -cp /tmp/enigmagrid-native/classes NativeRowFixtures /tmp/enigmagrid-native/fixtures.txt
+$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++ \
+  -std=c++17 -static-libstdc++ android/native-tests/real_gpu_checks.cpp \
+  -lvulkan -o /tmp/enigmagrid-native/real-gpu-checks
+```
+
+Use the `enigma_rows.comp.spv` generated from this checkout's shader by the Android
+build, for example under `app/build/intermediates/assets/release/mergeReleaseAssets/shaders/`
+inside `android`. Copy the executable, shader and fixtures to an authorized test
+device's temporary directory. Run `timeout -k 2 25 EXECUTABLE SHADER FIXTURES`
+through ADB, then remove those three temporary files. Do not run multiple driver
+tests concurrently. A timeout or mismatch is a failed qualification, not permission
+to bypass the device's resource controls.
+
+The current test passed on RedMagic's Adreno 830 with coherent input and output
+memory. This does not qualify other drivers or physical non-coherent memory.
+
 References:
 - [Flush and unmap semantics](https://docs.vulkan.org/refpages/latest/refpages/source/vkFlushMappedMemoryRanges.html)
 - [Whole-allocation mapped range alignment](https://docs.vulkan.org/refpages/latest/refpages/source/VkMappedMemoryRange.html)
