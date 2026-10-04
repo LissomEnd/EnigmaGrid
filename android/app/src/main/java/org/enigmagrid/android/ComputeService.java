@@ -107,9 +107,11 @@ public final class ComputeService extends Service {
                     CoordinatorClient client=new CoordinatorClient((String)account.get("server"));
                     while(!control.getAsBoolean()){
                         network=new NetworkWorker(client,store,rows);
+                        boolean acknowledged=false;long transactionStarted=System.nanoTime();
                         try{
                             outcome=null;
                             String result=network.once(control,org.enigmagrid.core.Canonical.object("cpu_percent",Math.max(0,Math.min(100,settings.getInt("cpu_percent",25))),"gpu_percent",Math.max(0,Math.min(100,settings.getInt("gpu_percent",0))),"allow_cpu",true,"allow_gpu",rows!=null&&rows.available()));
+                            acknowledged=network.acknowledgedWork();
                             outcome=result+(rows==null?"":" | GPU dispatches: "+rows.dispatches()+(rows.failed()?" (CPU fallback)":""));
                         }catch(CoordinatorClient.HttpFailure e){
                             if(e.status==401||e.status==403||e.status==422)throw new IllegalStateException("Coordinator refused the request ("+e.status+"). Saved account and results retained.");
@@ -117,7 +119,8 @@ public final class ComputeService extends Service {
                         }catch(java.io.IOException e){outcome="Connection unavailable; saved results retained. Retrying in 30 seconds";}
                         finally{network=null;}
                         if(rows!=null&&rows.failed())settings.edit().remove("gpu_qualification").apply();
-                        for(int tick=0;tick<300;tick++){if(control.getAsBoolean())throw new java.util.concurrent.CancellationException();Thread.sleep(100);}
+                        long waitMillis=org.enigmagrid.core.JobPacing.delayMillis(acknowledged,(System.nanoTime()-transactionStarted)/1_000_000L);
+                        for(long remaining=waitMillis;remaining>0;remaining-=100){if(control.getAsBoolean())throw new java.util.concurrent.CancellationException();Thread.sleep(Math.min(100,remaining));}
                     }
                     completed="Stopped";
                 }else{

@@ -71,7 +71,7 @@ public final class MainActivity extends Activity {
 
         label(content, "Contribute on your terms", 22);
 
-        label(content, "Android 0.4.5 • experimental volunteer computing", 15);
+        label(content, "Android 0.4.6 • experimental volunteer computing", 15);
 
         label(content, "Help investigate an unresolved Enigma message. No decryption or scientific advantage is claimed.", 17);
 

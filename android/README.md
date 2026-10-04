@@ -65,3 +65,18 @@ instantaneous utilization. A failed backend falls back to CPU.
 Update validation includes controlled transport tests for payload size, digest,
 redirects, package identity, version code and signer rejection. These adapter
 tests do not replace testing the Android system installer on each device.
+
+## Work scheduling (0.4.6)
+
+Acknowledged results request another job immediately, with a one-transaction-per-
+second ceiling for tiny jobs. Empty assignments and transient network failures
+retain a 30-second backoff. Search preparation uses available CPU processors
+(up to 32) and reduces results in canonical core order, preserving receipt bytes
+and candidate caps. CPU duty, pause, cancellation and resource guards apply to
+all workers. Vulkan calls remain serialized; GPU batching/context reuse remains
+an optimization opportunity. A 100% setting permits activity but does not promise
+full hardware utilization for every job.
+
+Parallel qualification compares complete receipts with Python and sequential
+Java, including candidate caps and 128-core domains. Other Android hardware
+still requires on-device qualification.

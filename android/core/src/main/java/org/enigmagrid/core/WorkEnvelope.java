@@ -54,9 +54,12 @@ public final class WorkEnvelope {
         return run(lease,cancel,null);
     }
     public static Map<String,Object> run(Map<String,Object> lease,BooleanSupplier cancel,BoundedCrib.RowProvider provider) {
+        return run(lease,cancel,provider,1);
+    }
+    public static Map<String,Object> run(Map<String,Object> lease,BooleanSupplier cancel,BoundedCrib.RowProvider provider,int workers) {
         Map<String,Object> job=validate(lease),budget=map(job.get("budgets"));
         List<?> values=list(job.get("core_indices"));long[] indices=new long[values.size()];for(int i=0;i<indices.length;i++)indices[i]=((Number)values.get(i)).longValue();
-        Map<String,Object> receipt=BoundedCrib.search((String)job.get("ciphertext"),(String)job.get("crib"),((Number)job.get("offset")).intValue(),indices,((Number)job.get("pairs")).intValue(),((Number)budget.get("node_limit")).intValue(),((Number)budget.get("board_limit")).intValue(),((Number)budget.get("completion_limit")).intValue(),((Number)budget.get("candidate_limit")).intValue(),cancel,provider);
+        Map<String,Object> receipt=BoundedCrib.search((String)job.get("ciphertext"),(String)job.get("crib"),((Number)job.get("offset")).intValue(),indices,((Number)job.get("pairs")).intValue(),((Number)budget.get("node_limit")).intValue(),((Number)budget.get("board_limit")).intValue(),((Number)budget.get("completion_limit")).intValue(),((Number)budget.get("candidate_limit")).intValue(),cancel,provider,workers);
         return object("summary",object("engine",ENGINE,"units",1,"job_hash",digest(body(job)),"status",receipt.get("status"),"exhaustive_within_scope",receipt.get("complete")),"receipt",receipt);
     }
 }

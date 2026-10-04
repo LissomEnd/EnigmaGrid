@@ -1,7 +1,7 @@
 package org.enigmagrid.core;
 
 import java.util.*;
-import java.util.concurrent.CancellationException;
+import java.util.concurrent.*;
 import java.util.function.BooleanSupplier;
 import static org.enigmagrid.core.Canonical.*;
 
@@ -54,6 +54,11 @@ public final class BoundedCrib {
         return search(cipher,crib,offset,indices,pairs,nodeLimit,boardLimit,completionLimit,candidateLimit,cancel,null);
     }
     public static Map<String,Object> search(String cipher,String crib,int offset,long[] indices,int pairs,int nodeLimit,int boardLimit,int completionLimit,int candidateLimit,BooleanSupplier cancel,RowProvider provider) {
+        return search(cipher,crib,offset,indices,pairs,nodeLimit,boardLimit,completionLimit,candidateLimit,cancel,provider,1);
+    }
+    /** Parallel preparation with canonical-order reduction. Providers are serialized. */
+    public static Map<String,Object> search(String cipher,String crib,int offset,long[] indices,int pairs,int nodeLimit,int boardLimit,int completionLimit,int candidateLimit,BooleanSupplier cancel,RowProvider provider,int workers) {
+        if(workers<1||workers>32)throw new IllegalArgumentException("Worker count");
         text(cipher);text(crib);
         if(offset<0||offset+crib.length()>cipher.length()||pairs<0||pairs>13||indices==null||indices.length<1||indices.length>128)throw new IllegalArgumentException("Invalid scope");
         if(nodeLimit<1||nodeLimit>5000||boardLimit<1||boardLimit>64||completionLimit<1||completionLimit>256||candidateLimit<1||candidateLimit>2048)throw new IllegalArgumentException("Invalid budget");
@@ -65,15 +70,17 @@ public final class BoundedCrib {
         for(int j=0;j<crib.length();j++){edges[j]=new int[]{j,crib.charAt(j)-65,cipher.charAt(offset+j)-65};conflict|=edges[j][1]==edges[j][2];}
         List<Object> candidates=new ArrayList<>();int unknown=0,nodes=0,visited=0;
         check(cancel);
+        ExecutorService pool=!conflict&&workers>1?Executors.newFixedThreadPool(Math.min(workers,cores.size())):null;
+        List<Future<BoardSolver.Result>> prepared=new ArrayList<>();
+        try {
+        if(pool!=null)for(Key k:cores.values())prepared.add(pool.submit(()->solveCore(k,offset,crib.length(),edges,pairs,nodeLimit,boardLimit,cancel,provider)));
         if(!conflict)for(Key k:cores.values()) {
             check(cancel);visited++;
-            // Independent cipher calls preserve the exact stepping sequence at every contact.
-            int[][] rows;
-            if(provider!=null)rows=provider.rows(k,offset,crib.length());
-            else rows=cpuRows(k,offset,crib.length());
-            if(rows==null||rows.length!=crib.length())throw new IllegalStateException("Invalid row backend output");
-            BoardSolver.Result solved=BoardSolver.solve(rows,edges,pairs,nodeLimit,boardLimit,cancel);
-            if(solved.status.equals("cancelled"))throw new CancellationException();
+            BoardSolver.Result solved;
+            if(pool==null)solved=solveCore(k,offset,crib.length(),edges,pairs,nodeLimit,boardLimit,cancel,provider);
+            else try{solved=prepared.get(visited-1).get();}
+            catch(InterruptedException e){Thread.currentThread().interrupt();throw new CancellationException();}
+            catch(ExecutionException e){Throwable cause=e.getCause();if(cause instanceof RuntimeException)throw (RuntimeException)cause;if(cause instanceof Error)throw (Error)cause;throw new IllegalStateException(cause);}
             nodes+=solved.nodes;boolean uncertain=solved.status.equals("unknown_budget");
             for(int[] partial:solved.partialBoards) {
                 Completions complete=new Completions(pairs,completionLimit,cancel);complete.visit(partial);uncertain|=complete.truncated;
@@ -88,8 +95,27 @@ public final class BoundedCrib {
             if(uncertain)unknown++;
             if(candidates.size()>=candidateLimit)break;
         }
+        } finally {
+            if(pool!=null){
+                for(Future<?> task:prepared)task.cancel(true);pool.shutdownNow();
+                boolean interrupted=Thread.interrupted();
+                try{if(!pool.awaitTermination(10,TimeUnit.SECONDS))throw new IllegalStateException("Search workers did not stop");}
+                catch(InterruptedException e){interrupted=true;throw new CancellationException();}
+                finally{if(interrupted)Thread.currentThread().interrupt();}
+            }
+        }
         check(cancel);
         boolean complete=unknown==0&&(conflict||visited==cores.size());
         return object("engine","bounded_crib_v1","scope_hash",digest(scope),"cipher_sha256",sha256(cipher),"status",complete?(candidates.isEmpty()?"complete_negative":"complete_candidates"):"unknown_budget","complete",complete,"historical_solution",false,"core_count",cores.size(),"visited_cores",visited,"nodes",nodes,"candidates",candidates,"budgets",object("nodes_per_core",nodeLimit,"boards_per_core",boardLimit,"completions_per_board",completionLimit,"candidates",candidateLimit),"model","clean","index",null,"crib",crib,"offset",offset,"pairs",pairs);
     }
+    private static BoardSolver.Result solveCore(Key key,int offset,int length,int[][] edges,int pairs,int nodes,int boards,BooleanSupplier cancel,RowProvider provider){
+        check(cancel);int[][] rows;
+        if(provider==null)rows=cpuRows(key,offset,length);
+        else synchronized(provider){check(cancel);rows=provider.rows(key,offset,length);}
+        if(rows==null||rows.length!=length)throw new IllegalStateException("Invalid row backend output");
+        BoardSolver.Result result=BoardSolver.solve(rows,edges,pairs,nodes,boards,cancel);
+        if(result.status.equals("cancelled"))throw new CancellationException();
+        return result;
+    }
+
 }

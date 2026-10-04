@@ -6,7 +6,7 @@ sys.path.insert(0,str(root/'solver/runtime/src'))
 from search.crib_pilot import core_at, DOMAIN
 from search.c3_models import crypt
 from search.bounded_crib import search
-p=argparse.ArgumentParser();p.add_argument('--jdk',required=True);p.add_argument('--write-fixtures',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--jdk',required=True);p.add_argument('--workers',type=int,default=1);p.add_argument('--write-fixtures',action='store_true');a=p.parse_args()
 jdk=pathlib.Path(a.jdk)/'bin';rng=random.Random(39264)
 lines=[];expected=[]
 for i in range(60):
@@ -25,7 +25,7 @@ for i in range(60):
 with tempfile.TemporaryDirectory() as tmp:
     sources=list((root/'android/core/src/main/java/org/enigmagrid/core').glob('*.java'))
     subprocess.run([str(jdk/'javac.exe'),'-d',tmp,*map(str,sources),str(root/'android/core/CribCli.java')],check=True)
-    result=subprocess.run([str(jdk/'java.exe'),'-cp',tmp,'CribCli'],input='\n'.join(lines),text=True,capture_output=True,check=True)
+    result=subprocess.run([str(jdk/'java.exe'),'-cp',tmp,'CribCli',str(a.workers)],input='\n'.join(lines),text=True,capture_output=True,check=True)
     actual=result.stdout.splitlines()
     assert len(actual)==len(expected),(len(actual),len(expected))
     for i,(raw,want) in enumerate(zip(actual,expected)):

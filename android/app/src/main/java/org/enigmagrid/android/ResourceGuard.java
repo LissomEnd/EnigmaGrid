@@ -12,7 +12,7 @@ final class ResourceGuard implements Supplier<String> {
     private long last=-1;
     private String cached="Checking battery";
     ResourceGuard(Context context){this.context=context.getApplicationContext();power=(PowerManager)context.getSystemService(Context.POWER_SERVICE);}
-    void setChargingOnly(boolean value){if(chargingOnly!=value){chargingOnly=value;last=-1;}}
+    synchronized void setChargingOnly(boolean value){if(chargingOnly!=value){chargingOnly=value;last=-1;}}
     @Override public synchronized String get() {
         long now=SystemClock.elapsedRealtime();if(last>=0&&now-last<1000)return cached;last=now;
         Intent battery=context.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));

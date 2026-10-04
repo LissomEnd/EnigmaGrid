@@ -11,6 +11,8 @@ final class NetworkWorker {
     private final CoordinatorClient client,heartbeat;
     private final CredentialStore store,pending;
     private volatile boolean revoked;
+    private boolean acknowledgedWork;
+    boolean acknowledgedWork(){return acknowledgedWork;}
     private final org.enigmagrid.core.BoundedCrib.RowProvider rows;
     NetworkWorker(CoordinatorClient client,CredentialStore store){this(client,store,null);}
     NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows){this.rows=rows;this.client=client;this.heartbeat=client.fork();this.store=store;this.pending=store.pendingResults();}
@@ -39,7 +41,7 @@ final class NetworkWorker {
             if(!client.origin().equals(saved.get("server"))||!org.enigmagrid.core.Canonical.digest(token).equals(saved.get("owner")))throw new IllegalStateException("Saved result belongs to a different account; preserved locally");
             if(!(saved.get("submission") instanceof Map))throw new IllegalStateException("Invalid saved result; preserved locally");
             if(state.remove("pending_submission")!=null)store.save(state);
-            check(control);submit((Map<String,Object>)saved.get("submission"),token);
+            check(control);submit((Map<String,Object>)saved.get("submission"),token);acknowledgedWork=true;
             return "Saved result acknowledged; independent verification may still be pending";
         }
         check(control);
@@ -58,12 +60,12 @@ final class NetworkWorker {
             catch(Exception e){/* Offline computation may finish; durable result waits for reconnection. */}
         },20,20,TimeUnit.SECONDS);
         long started=System.nanoTime();Map<String,Object> result;
-        try{result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows);}
+        try{result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));}
         finally{renew.shutdownNow();heartbeat.cancel();}
         Map<String,Object> receipt=(Map<String,Object>)result.get("receipt");
         Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Math.max(0,(System.nanoTime()-started)/1_000_000_000L),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
         pending.save(object("server",client.origin(),"owner",org.enigmagrid.core.Canonical.digest(token),"submission",submission));
-        check(control);submit(submission,token);
+        check(control);submit(submission,token);acknowledgedWork=true;
         return "Result acknowledged; awaiting independent verification";
     }
     private void check(BooleanSupplier control){if(revoked||Thread.currentThread().isInterrupted()||control.getAsBoolean())throw new CancellationException();}

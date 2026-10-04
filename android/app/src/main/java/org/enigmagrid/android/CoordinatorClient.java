@@ -32,7 +32,7 @@ final class CoordinatorClient {
         try {
             if(tls!=null)c.setSSLSocketFactory(tls);
             c.setInstanceFollowRedirects(false);c.setConnectTimeout(15000);c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent","EnigmaGridAndroid/0.4.5");c.setRequestProperty("Accept","application/json");
+            c.setRequestProperty("User-Agent","EnigmaGridAndroid/0.4.6");c.setRequestProperty("Accept","application/json");
             if(token!=null){if(!token.matches("[A-Za-z0-9_\\-]{16,512}"))throw new IllegalArgumentException("Invalid credential format");c.setRequestProperty("X-Device-Token",token);}
             if(payload!=null) {
                 byte[] bytes=Canonical.json(payload).getBytes(StandardCharsets.UTF_8);
