@@ -338,14 +338,17 @@ def run_portable(lease,runtime=None,state_path=None):
         import numba
         numba.set_num_threads(min(threads,numba.config.NUMBA_NUM_THREADS))
         return score_cpu(inp,keys)
+    from scoring_pool import OrderedScorers
+    gpu_pool=OrderedScorers(_GPU_SCORERS) if gpu else None
+    def gpu_score(keys):return np.concatenate(gpu_pool.score(keys))
     pool=ThreadPoolExecutor(max_workers=1) if gpu and cpu else None
     def scorer(keys):
         if gpu and cpu and len(keys)>1:
             middle=len(keys)//2
             future=pool.submit(cpu_score,keys[:middle])
-            right=_GPU_SCORERS[0](keys[middle:])
+            right=gpu_score(keys[middle:])
             return np.concatenate((future.result(),right))
-        return _GPU_SCORERS[0](keys) if gpu else cpu_score(keys)
+        return gpu_score(keys) if gpu else cpu_score(keys)
     def checkpoint(offset,iteration):
         if not state_path:return
         ctl=read_control(state_path)
@@ -374,6 +377,7 @@ def run_portable(lease,runtime=None,state_path=None):
         runtime["progress"]=1.0
     finally:
         if pool:pool.shutdown(wait=True)
+        if gpu_pool:gpu_pool.close()
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 

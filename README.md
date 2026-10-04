@@ -70,3 +70,17 @@ See `PRIVACY.md`, `SECURITY.md`, `CONTRIBUTING.md` and `RELEASE.md` before publi
 
 Original project code is MIT licensed. Bundled third-party data and runtime
 components retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+### Windows multi-GPU development status
+
+The development worker splits portable-event scoring batches across qualified
+OpenCL devices concurrently, preserving key order and deterministic results.
+CPU/GPU hybrid mode retains its current equal CPU/GPU split; GPU work is shared
+across the qualified devices. This does not accelerate the separate CPU-only
+bounded-crib engine. Resource limits and campaign priorities are unchanged.
+
+`tests/test_scoring_pool.py` checks concurrent dispatch, ordering and error cleanup.
+`tests/qualify_multi_gpu.py` is an opt-in hardware check of complete CPU, GPU and
+hybrid worker results. Current physical validation covers one AMD GPU; concurrent
+multiple-device execution has adapter coverage but awaits physical multi-GPU
+validation and a Windows installer release. No utilization or speedup guarantee.
