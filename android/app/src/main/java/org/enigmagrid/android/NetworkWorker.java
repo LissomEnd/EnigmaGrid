@@ -14,7 +14,8 @@ final class NetworkWorker {
     private boolean acknowledgedWork;
     private boolean batchEnabled;
     private volatile String phase="Preparing account";
-    String phase(){return phase;}
+    private volatile boolean uploadActive;
+    String phase(){String current=phase;return uploadActive&&"Computing assigned work".equals(current)?"Computing assigned work · uploading previous result":current;}
     private String acknowledgedSettings;
     boolean acknowledgedWork(){return acknowledgedWork;}
     private final org.enigmagrid.core.BoundedCrib.RowProvider rows;
@@ -52,6 +53,7 @@ final class NetworkWorker {
         if(!receipts.isEmpty()){
             if(state.remove("pending_submission")!=null)store.save(state);
             Map<String,Object> receipt=receipts.get(0);
+            phase="Sending saved result; waiting for coordinator";
             check(control);submit(receipt,token);queue.acknowledge((String)receipt.get("lease_id"));acknowledgedWork=true;
             return "Saved result acknowledged; independent verification may still be pending";
         }
@@ -89,6 +91,8 @@ final class NetworkWorker {
             catch(IllegalStateException e){revoked=true;}
             catch(Exception e){/* Offline computation may finish; durable result waits for reconnection. */}
         },20,20,TimeUnit.SECONDS);
+        ExecutorService uploads=Executors.newSingleThreadExecutor();
+        Future<?> uploading=null;String uploadingId=null;
         try {
         for(Object item:leases){
         check(control);
@@ -100,17 +104,45 @@ final class NetworkWorker {
         Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Double.toString(Math.max(0.0,(System.nanoTime()-started)/1_000_000_000.0)),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
         phase="Saving completed result";
         queue.append(submission);
-        check(control);submit(submission,token);queue.acknowledge((String)submission.get("lease_id"));acknowledgedWork=true;
+        // At most one upload overlaps the next computation. Only this thread
+        // changes the durable queue, so late acknowledgements cannot erase work.
+        if(uploading!=null){awaitUpload(uploading,control);queue.acknowledge(uploadingId);acknowledgedWork=true;}
+        check(control);
+        uploadingId=(String)submission.get("lease_id");
+        uploading=uploads.submit(()->{submit(submission,token);return null;});
         }
-        } finally {renew.shutdownNow();heartbeat.cancel();}
+        if(uploading!=null){awaitUpload(uploading,control);queue.acknowledge(uploadingId);acknowledgedWork=true;}
+        } finally {
+            if(uploading!=null&&!uploading.isDone()){client.cancel();uploading.cancel(true);}
+            uploads.shutdownNow();
+            renew.shutdownNow();heartbeat.cancel();
+            if(!uploads.awaitTermination(2,TimeUnit.SECONDS))
+                throw new IllegalStateException("Upload did not stop; saved results retained");
+        }
         return "Result acknowledged; awaiting independent verification";
     }
     private void check(BooleanSupplier control){if(revoked||Thread.currentThread().isInterrupted()||control.getAsBoolean())throw new CancellationException();}
+    private void awaitUpload(Future<?> upload,BooleanSupplier control) throws Exception {
+        phase="Waiting for saved result acknowledgement";
+        while(true){
+            check(control);
+            try{upload.get(100,TimeUnit.MILLISECONDS);return;}
+            catch(TimeoutException waiting){/* Keep pause/stop controls responsive. */}
+            catch(ExecutionException failed){
+                Throwable cause=failed.getCause();
+                if(cause instanceof Exception)throw (Exception)cause;
+                if(cause instanceof Error)throw (Error)cause;
+                throw new IllegalStateException(cause);
+            }
+        }
+    }
     private void allowed(Map<String,Object> response){if(Boolean.FALSE.equals(response.get("enabled"))||Boolean.TRUE.equals(response.get("quarantined")))throw new IllegalStateException("Device disabled by coordinator");if(Boolean.TRUE.equals(response.get("update_required")))throw new IllegalStateException("Coordinator requires a newer compatible client");}
     private void submit(Map<String,Object> submission,String token) throws Exception {
-        phase="Sending saved result; waiting for coordinator";
-        Map<String,Object> ack=client.request("/api/complete",submission,token);
-        if(!Boolean.TRUE.equals(ack.get("ok")))throw new IllegalStateException("Submission not acknowledged");
+        uploadActive=true;
+        try {
+            Map<String,Object> ack=client.request("/api/complete",submission,token);
+            if(!Boolean.TRUE.equals(ack.get("ok")))throw new IllegalStateException("Submission not acknowledged");
+        } finally {uploadActive=false;}
 
     }
 }
