@@ -12,6 +12,7 @@ final class NetworkWorker {
     private final CredentialStore store,pending;
     private volatile boolean revoked;
     private boolean acknowledgedWork;
+    private String acknowledgedSettings;
     boolean acknowledgedWork(){return acknowledgedWork;}
     private final org.enigmagrid.core.BoundedCrib.RowProvider rows;
     NetworkWorker(CoordinatorClient client,CredentialStore store){this(client,store,null);}
@@ -29,6 +30,7 @@ final class NetworkWorker {
     String once(BooleanSupplier control) throws Exception {return once(control,null);}
     @SuppressWarnings("unchecked")
     String once(BooleanSupplier control,Map<String,Object> settings) throws Exception {
+        acknowledgedWork=false;
         Map<String,Object> state=store.load();
         if(state==null||!client.origin().equals(state.get("server")))throw new IllegalStateException("No matching account");
         String token=(String)state.get("device_token");
@@ -45,9 +47,16 @@ final class NetworkWorker {
             return "Saved result acknowledged; independent verification may still be pending";
         }
         check(control);
-        if(settings!=null)client.request("/api/device/settings",object("settings",settings),token);
-        Map<String,Object> health=heartbeat.request("/api/heartbeat",object("meta",metadata()),token);
-        allowed(health);
+        if(settings!=null){
+            String signature=org.enigmagrid.core.Canonical.json(object("owner",org.enigmagrid.core.Canonical.digest(token),"settings",settings));
+            if(!signature.equals(acknowledgedSettings)){
+                Map<String,Object> ack=client.request("/api/device/settings",object("settings",settings),token);
+                if(!Boolean.TRUE.equals(ack.get("ok")))throw new IllegalStateException("Settings not acknowledged");
+                acknowledgedSettings=signature;
+            }
+        }
+        // Lease itself checks revocation and mandatory updates, and records runtime metadata.
+        // Long-running work still renews its lease with the scheduled heartbeat below.
         Map<String,Object> assignment=client.request("/api/lease",object("meta",metadata()),token);allowed(assignment);
         Object raw=assignment.get("lease");if(raw==null)return "Waiting for compatible work";
         if(!(raw instanceof Map))throw new IllegalArgumentException("Invalid lease");
@@ -63,7 +72,7 @@ final class NetworkWorker {
         try{result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));}
         finally{renew.shutdownNow();heartbeat.cancel();}
         Map<String,Object> receipt=(Map<String,Object>)result.get("receipt");
-        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Math.max(0,(System.nanoTime()-started)/1_000_000_000L),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
+        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Double.toString(Math.max(0.0,(System.nanoTime()-started)/1_000_000_000.0)),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
         pending.save(object("server",client.origin(),"owner",org.enigmagrid.core.Canonical.digest(token),"submission",submission));
         check(control);submit(submission,token);acknowledgedWork=true;
         return "Result acknowledged; awaiting independent verification";

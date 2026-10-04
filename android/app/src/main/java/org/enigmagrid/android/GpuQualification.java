@@ -23,12 +23,26 @@ final class GpuQualification {
                 for(int i=0;i<length;i++){if(rows[i*26+x]!=expected.charAt(offset+i)-65)throw new IllegalStateException("GPU/CPU mismatch");checked++;}
             }
         }
-        int receipts=EngineQualification.run(context,()->Thread.currentThread().isInterrupted(),(key,offset,length)->{
-            int[] flat=gpu.rows(EnigmaM4.rowInputs(key.reflector,key.greek,key.moving,key.positions,key.rings,offset,length));
-            if(flat.length!=length*26)throw new IllegalStateException("GPU row count");
-            int[][] rows=new int[length][26];for(int i=0;i<length;i++)System.arraycopy(flat,i*26,rows[i],0,26);return rows;
-        });
-        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts in "+((System.nanoTime()-start)/1000000)+" ms. GPU is ready for compatible grid work.";
+        for(int count:new int[]{1,2,16})for(int length:new int[]{1,72}){
+            if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
+            java.util.List<org.enigmagrid.core.BoundedCrib.Key> keys=new java.util.ArrayList<>();
+            for(int i=0;i<count;i++)keys.add(org.enigmagrid.core.BoundedCrib.coreAt((i*271828183L)%org.enigmagrid.core.BoundedCrib.DOMAIN));
+            int[][][] actual=org.enigmagrid.core.RowBatch.unpack(gpu.rows(org.enigmagrid.core.RowBatch.pack(keys,72-length,length)),count,length);
+            for(int k=0;k<count;k++){
+                int[][] expected=org.enigmagrid.core.BoundedCrib.cpuRows(keys.get(k),72-length,length);
+                for(int r=0;r<length;r++){if(!Arrays.equals(actual[k][r],expected[r]))throw new IllegalStateException("Batch GPU/CPU mismatch");checked+=26;}
+            }
+        }
+        java.util.concurrent.atomic.AtomicInteger dispatches=new java.util.concurrent.atomic.AtomicInteger();
+        org.enigmagrid.core.BatchedRows batched=new org.enigmagrid.core.BatchedRows(packed->{dispatches.incrementAndGet();return gpu.rows(packed);},()->Thread.currentThread().isInterrupted());
+        int receipts=EngineQualification.run(context,()->Thread.currentThread().isInterrupted(),batched);
+        long[] indices=new long[128];for(int i=0;i<indices.length;i++)indices[i]=i*100003L;
+        java.util.Map<String,Object> cpu=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->false,null,8);
+        dispatches.set(0);
+        java.util.Map<String,Object> accelerated=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->false,batched,8);
+        if(!org.enigmagrid.core.Canonical.json(cpu).equals(org.enigmagrid.core.Canonical.json(accelerated)))throw new IllegalStateException("Batched receipt mismatch");
+        if(dispatches.get()!=8)throw new IllegalStateException("Expected eight GPU batches: "+dispatches.get());
+        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts plus 128-core/eight-dispatch parity in "+((System.nanoTime()-start)/1000000)+" ms. GPU is ready for compatible grid work.";
         }
     }
 }

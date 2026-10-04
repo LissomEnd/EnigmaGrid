@@ -90,23 +90,15 @@ public final class ComputeService extends Service {
 
             try(GpuProcess gpu=GpuProcess.qualificationKey().equals(settings.getString("gpu_qualification",""))?new GpuProcess(this):null){
 
-                org.enigmagrid.core.AdaptiveRows rows=gpu==null?null:new org.enigmagrid.core.AdaptiveRows((key,offset,length)->{
-
-                    int[] flat=gpu.rows(org.enigmagrid.core.EnigmaM4.rowInputs(key.reflector,key.greek,key.moving,key.positions,key.rings,offset,length));
-
-                    if(flat.length!=length*26)throw new IllegalStateException("GPU row count");
-
-                    int[][] result=new int[length][26];for(int i=0;i<length;i++)System.arraycopy(flat,i*26,result[i],0,26);return result;
-
-                },()->Math.max(0,Math.min(100,settings.getInt("gpu_percent",0))),control,new WorkControl.SystemTiming());
+                org.enigmagrid.core.AdaptiveRows rows=gpu==null?null:new org.enigmagrid.core.AdaptiveRows(new org.enigmagrid.core.BatchedRows(gpu::rows,control),()->Math.max(0,Math.min(100,settings.getInt("gpu_percent",0))),control,new WorkControl.SystemTiming());
 
                 if(gridMode){
                     CredentialStore store=new CredentialStore(getApplicationContext());
                     java.util.Map<String,Object> account=store.load();
                     if(account==null)throw new IllegalStateException("Register this device from Account before starting work.");
                     CoordinatorClient client=new CoordinatorClient((String)account.get("server"));
+                    network=new NetworkWorker(client,store,rows);
                     while(!control.getAsBoolean()){
-                        network=new NetworkWorker(client,store,rows);
                         boolean acknowledged=false;long transactionStarted=System.nanoTime();
                         try{
                             outcome=null;
@@ -117,11 +109,12 @@ public final class ComputeService extends Service {
                             if(e.status==401||e.status==403||e.status==422)throw new IllegalStateException("Coordinator refused the request ("+e.status+"). Saved account and results retained.");
                             outcome="Coordinator temporarily unavailable; retrying in 30 seconds";
                         }catch(java.io.IOException e){outcome="Connection unavailable; saved results retained. Retrying in 30 seconds";}
-                        finally{network=null;}
+
                         if(rows!=null&&rows.failed())settings.edit().remove("gpu_qualification").apply();
                         long waitMillis=org.enigmagrid.core.JobPacing.delayMillis(acknowledged,(System.nanoTime()-transactionStarted)/1_000_000L);
                         for(long remaining=waitMillis;remaining>0;remaining-=100){if(control.getAsBoolean())throw new java.util.concurrent.CancellationException();Thread.sleep(Math.min(100,remaining));}
                     }
+                    network=null;
                     completed="Stopped";
                 }else{
                     int count=EngineQualification.run(getApplicationContext(),control,rows);

@@ -7,7 +7,7 @@ import static org.enigmagrid.core.Canonical.*;
 
 /** Clean bounded_crib_v1 receipt engine; no network or implicit search domain. */
 public final class BoundedCrib {
-    public interface RowProvider {int[][] rows(Key key,int offset,int length);}
+    public interface RowProvider {int[][] rows(Key key,int offset,int length); default void prepare(List<Key> keys,int offset,int length){}}
     public static final long DOMAIN=1344L*308915776L;
     private static final String[] ROTORS={"I","II","III","IV","V","VI","VII","VIII"};
     private static final List<String[]> ORDERS=new ArrayList<>();
@@ -70,6 +70,7 @@ public final class BoundedCrib {
         for(int j=0;j<crib.length();j++){edges[j]=new int[]{j,crib.charAt(j)-65,cipher.charAt(offset+j)-65};conflict|=edges[j][1]==edges[j][2];}
         List<Object> candidates=new ArrayList<>();int unknown=0,nodes=0,visited=0;
         check(cancel);
+        if(!conflict&&provider!=null){synchronized(provider){provider.prepare(new ArrayList<>(cores.values()),offset,crib.length());}}
         ExecutorService pool=!conflict&&workers>1?Executors.newFixedThreadPool(Math.min(workers,cores.size())):null;
         List<Future<BoardSolver.Result>> prepared=new ArrayList<>();
         try {

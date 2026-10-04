@@ -107,3 +107,26 @@ every supported API level. Mandatory-update policy and invalid-APK rejection
 have controlled tests; a production mandatory-version change was not performed
 for testing. Background periodic release checks and advanced volunteer account
 management are still pending.
+
+## Unreleased throughput changes
+
+Search-local Vulkan batches pack up to 16 keys per dispatch and cache only the
+current bounded search (at most 128 keys). RedMagic qualification compared
+41,054 contacts and 60 complete receipts, plus a 128-key receipt matching CPU
+with exactly eight Vulkan dispatches. This reduces IPC calls; it is not evidence
+of full GPU utilization or an end-to-end throughput multiplier. The backend
+qualification key changes, so a new device test is required before GPU use.
+
+The worker reuses its transaction state, sends settings only after a change or
+failed acknowledgement, and relies on lease responses for revocation and minimum
+version checks. Long searches retain periodic heartbeats. Completed receipts
+remain durable until acknowledged. Fractional compute seconds are sent as decimal
+text accepted by the coordinator, keeping the integer/ASCII receipt format intact.
+Android HTTPS/Keystore/GPU tests cover lost acknowledgements and process restart
+without duplicate credit. The one-transaction-per-second ceiling remains.
+
+Additional host checks: compile `core/BatchRowsChecks.java` with the core sources
+and run `BatchRowsChecks`; run `core/qualify_network_cycle.py --jdk PATH`.
+Batch checks cover cache invalidation, cancellation, CPU fallback, disabled GPU,
+request order and dispatch telemetry. These changes are not in the published
+0.4.7 APK yet.

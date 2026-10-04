@@ -44,7 +44,7 @@ struct Compute {
         float priority=0.25f;VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};q.queueFamilyIndex=family;q.queueCount=1;q.pQueuePriorities=&priority;
         VkDeviceCreateInfo d{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};d.queueCreateInfoCount=1;d.pQueueCreateInfos=&q;checked(vkCreateDevice(physical,&d,nullptr,&device));vkGetDeviceQueue(device,family,0,&queue);
         // Fixed bounded capacity supports every accepted row length without reallocations.
-        const VkDeviceSize inputBytes=1273*4,outputBytes=72*26*4;buffer(0,inputBytes);buffer(1,outputBytes);
+        const VkDeviceSize inputBytes=(625+16*72*9)*4,outputBytes=16*72*26*4;buffer(0,inputBytes);buffer(1,outputBytes);
         VkShaderModuleCreateInfo s{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};s.codeSize=code.size()*4;s.pCode=code.data();checked(vkCreateShaderModule(device,&s,nullptr,&shader));
         VkDescriptorSetLayoutBinding bindings[2]{};for(int i=0;i<2;i++){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}
         VkDescriptorSetLayoutCreateInfo l{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};l.bindingCount=2;l.pBindings=bindings;checked(vkCreateDescriptorSetLayout(device,&l,nullptr,&layout));
@@ -79,9 +79,9 @@ Java_org_enigmagrid_android_VulkanBackend_rowsNative(JNIEnv* env,jclass,jintArra
     std::lock_guard<std::mutex> lock(computeMutex);
     try{
         if(!packed||!spirv)throw std::runtime_error("Missing GPU input");
-        jsize n=env->GetArrayLength(packed),bytes=env->GetArrayLength(spirv);if(n<634||n>1273||bytes<20||bytes>1024*1024||bytes%4)throw std::runtime_error("Invalid GPU buffer size");
+        jsize n=env->GetArrayLength(packed),bytes=env->GetArrayLength(spirv);if(n<634||n>(625+16*72*9)||bytes<20||bytes>1024*1024||bytes%4)throw std::runtime_error("Invalid GPU buffer size");
         std::vector<uint32_t> input(n),code(bytes/4);env->GetIntArrayRegion(packed,0,n,reinterpret_cast<jint*>(input.data()));env->GetByteArrayRegion(spirv,0,bytes,reinterpret_cast<jbyte*>(code.data()));
-        if(input[0]<1||input[0]>72||n!=625+input[0]*9||code[0]!=0x07230203)throw std::runtime_error("Invalid GPU layout");
+        if(input[0]<1||input[0]>16*72||n!=625+input[0]*9||code[0]!=0x07230203)throw std::runtime_error("Invalid GPU layout");
         for(size_t i=1;i<625;i++)if(input[i]>25)throw std::runtime_error("Invalid contact");
         for(size_t i=625;i<input.size();i++)if(input[i]>=((i-625)%9<5?12u:26u))throw std::runtime_error("Invalid rotor descriptor");
         if(!cachedCompute||cachedCode!=code){cachedCompute.reset(new Compute());cachedCode=code;}

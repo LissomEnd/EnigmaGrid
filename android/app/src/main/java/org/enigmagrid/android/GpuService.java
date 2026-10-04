@@ -16,7 +16,7 @@ public final class GpuService extends Service {
         final Messenger reply=message.replyTo;final int id=message.arg1;
         if(busy){send(reply,id,null,"GPU busy");return true;}
         int[] input=message.getData().getIntArray("input");
-        if(input==null||input.length>1273){send(reply,id,null,"Invalid GPU request");return true;}
+        if(input==null||input.length>org.enigmagrid.core.RowBatch.MAX_INPUT){send(reply,id,null,"Invalid GPU request");return true;}
         busy=true;
         // A wedged native driver cannot indefinitely retain the main app's worker.
         Runnable deadline=()->android.os.Process.killProcess(android.os.Process.myPid());

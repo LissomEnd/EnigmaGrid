@@ -16,6 +16,7 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
     public AdaptiveRows(BoundedCrib.RowProvider accelerator,IntSupplier percent,BooleanSupplier cancel,WorkControl.Timing timing){
         this.accelerator=accelerator;this.percent=percent;this.cancel=cancel;this.timing=timing;
     }
+    public void prepare(java.util.List<BoundedCrib.Key> keys,int offset,int length){accelerator.prepare(keys,offset,length);}
     public boolean failed(){return failed;}
     public long dispatches(){return dispatches;}
     public boolean available(){return !failed&&percent.getAsInt()>0;}
@@ -31,6 +32,7 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
         }
         check();long start=timing.nanos();
         try {
+            long before=accelerator instanceof BatchedRows?((BatchedRows)accelerator).dispatches():0;
             int[][] rows=accelerator.rows(key,offset,length);
             if(rows==null||rows.length!=length)throw new IllegalStateException("GPU row count");
             for(int[] row:rows){
@@ -38,7 +40,7 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
                 for(int x=0;x<26;x++)if(row[x]<0||row[x]>=26||row[x]==x||row[row[x]]!=x)throw new IllegalStateException("Invalid GPU permutation");
             }
             long end=timing.nanos();nextDispatch=end+Math.max(0,end-start)*(100-duty)/duty;
-            check();dispatches++;return rows;
+            check();dispatches+=accelerator instanceof BatchedRows?((BatchedRows)accelerator).dispatches()-before:1;return rows;
         } catch(CancellationException e){throw e;}
           catch(RuntimeException|LinkageError e){failed=true;check();return BoundedCrib.cpuRows(key,offset,length);}
     }
