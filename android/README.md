@@ -1,8 +1,8 @@
 # EnigmaGrid for Android
 
 Experimental volunteer client, Android 8+ (API 26). Install the signed APK from
-[GitHub Releases](https://github.com/LissomEnd/EnigmaGrid/releases/tag/android-v0.4.12),
-register under Account, then choose Start contributing. Version 0.4.12 is published
+[GitHub Releases](https://github.com/LissomEnd/EnigmaGrid/releases/tag/android-v0.4.13),
+register under Account, then choose Start contributing. Version 0.4.13 is published
 as an experimental APK.
 
 Separate CPU/GPU duty sliders, charging-only option, battery and thermal guards,
@@ -32,9 +32,9 @@ Account registration and statistics are available in-app; advanced account
 management does not yet have full parity with the volunteer web interface.
 No admin functionality is included.
 
-### Prepared memory-pressure guard (not in published 0.4.12)
+### Compatibility safeguards (0.4.13)
 
-The next consolidated build checks Android's `ActivityManager.MemoryInfo.lowMemory`
+Version 0.4.13 checks Android's `ActivityManager.MemoryInfo.lowMemory`
 alongside battery and thermal restrictions, with the same one-second cache.
 The cooperative gate suspends computation and resumes when the system clears the
 signal; Stop remains available while waiting. It preserves the current search
@@ -42,7 +42,7 @@ stack, so this is not a promise to release all allocated memory or prevent Andro
 from reclaiming the process. Controlled host tests cover the gate's recovery and
 Stop behavior; forced system-wide memory exhaustion has not been tested on a phone.
 
-The next build also explicitly excludes app state from Android 12+ cloud backup
+Version 0.4.13 also explicitly excludes app state from Android 12+ cloud backup
 and device transfer. Credentials and pending receipts already use no-backup storage;
 GPU qualification, resource preferences and requested-work state must likewise not
 be inherited by another phone. Existing installations keep their local data when
@@ -320,3 +320,11 @@ other errors are reported. Host tests exercise eight completions and safe stop
 through the full worker loop, plus expired reservations, mandatory updates,
 revocation, malformed batches and legacy fallback. Installed clients are still
 unchanged; these checks do not measure production throughput.
+
+## Android 0.4.13 deployment
+
+Published as an experimental prerelease after CI passed for commit `6e82802`.
+The signed APK was installed over 0.4.12 on RedMagic; contribution resumed with
+LissomEnd 3 and the existing CPU/GPU settings. One new production receipt was
+independently replayed with an exact match. Signature continuity and all three
+native ABI layouts passed. Other physical devices remain unverified.
