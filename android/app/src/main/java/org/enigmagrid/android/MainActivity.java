@@ -104,7 +104,9 @@ public final class MainActivity extends Activity {
         boolean vulkan = getPackageManager().hasSystemFeature("android.hardware.vulkan.compute");
 
         boolean savedGpu=GpuProcess.qualificationKey().equals(getSharedPreferences("worker-settings",0).getString("gpu_qualification",""));
-        label(diagnostics, vulkan ? (savedGpu?"Vulkan Compute qualified":"Vulkan Compute detected — GPU qualification pending") : "Vulkan Compute unavailable — CPU fallback required", 16);
+        // The Android compute feature includes optional capabilities beyond our Vulkan 1.0 shader.
+        // Only the isolated qualification determines whether this backend can run correctly.
+        TextView gpuCompatibility=label(diagnostics, savedGpu?"Vulkan Compute qualified":(vulkan?"Vulkan Compute advertised — device test required":"Vulkan Compute not advertised — device test required; CPU available"), 16);
 
         TextView gpuStatus=label(diagnostics,savedGpu?"GPU checks passed on this device. Actual dispatches appear in Compute while contributing.":"GPU computation has not been tested.",16);
 
@@ -116,7 +118,7 @@ public final class MainActivity extends Activity {
 
             final boolean qualified=passed;getSharedPreferences("worker-settings",0).edit().putString("gpu_qualification",passed?GpuProcess.qualificationKey():"").apply();
 
-            final String message=result;runOnUiThread(()->{if(!isDestroyed()){gpuStatus.setText(message);gpuTest.setEnabled(true);if(gpuSlider!=null){gpuSlider.setEnabled(qualified);for(Button step:gpuSteps)step.setEnabled(qualified);((TextView)gpuSlider.getTag()).setText("GPU: "+gpuSlider.getProgress()+"%"+(qualified?"":" — check required"));}}});
+            final String message=result;runOnUiThread(()->{if(!isDestroyed()){gpuCompatibility.setText(qualified?"Vulkan Compute qualified":"GPU check did not pass — CPU remains available");gpuStatus.setText(message);gpuTest.setEnabled(true);if(gpuSlider!=null){gpuSlider.setEnabled(qualified);for(Button step:gpuSteps)step.setEnabled(qualified);((TextView)gpuSlider.getTag()).setText("GPU: "+gpuSlider.getProgress()+"%"+(qualified?"":" — check required"));}}});
 
         },"gpu-qualification");gpuQualification.start();});
 
