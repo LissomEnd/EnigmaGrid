@@ -38,10 +38,24 @@ final class CredentialStore {
         byte[] plain=Canonical.json(state).getBytes(StandardCharsets.UTF_8);
         if(plain.length>limit)throw new IOException("Encrypted record too large");
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());
-        cipher.updateAAD(alias.getBytes(StandardCharsets.UTF_8));byte[] encrypted=cipher.doFinal(plain),iv=cipher.getIV();
+        cipher.updateAAD(alias.getBytes(StandardCharsets.UTF_8));byte[] encrypted=finishChunks(cipher,plain,0,plain.length),iv=cipher.getIV();
         FileOutputStream output=null;
         try {output=file.startWrite();output.write(1);output.write(iv.length);output.write(iv);output.write(encrypted);file.finishWrite(output);}
         catch(Exception e){if(output!=null)file.failWrite(output);throw e;}
+    }
+    // Bound calls into older KeyStore providers; never expose plaintext before tag verification.
+    private static byte[] finishChunks(Cipher cipher,byte[] input,int offset,int length) throws Exception {
+        ByteArrayOutputStream output=new ByteArrayOutputStream();
+        int end=offset+length;
+        while(offset<end){
+            int count=Math.min(16384,end-offset);
+            byte[] part=cipher.update(input,offset,count);
+            if(part!=null)output.write(part);
+            offset+=count;
+        }
+        byte[] last=cipher.doFinal();
+        if(last!=null)output.write(last);
+        return output.toByteArray();
     }
     synchronized Map<String,Object> load() throws Exception {
         byte[] raw;
@@ -50,6 +64,6 @@ final class CredentialStore {
         }catch(FileNotFoundException e){return null;}
         if(raw.length<30||raw[0]!=1||raw[1]!=12)throw new IOException("Invalid credential record");
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,raw,2,12));cipher.updateAAD(alias.getBytes(StandardCharsets.UTF_8));
-        return JsonCodec.object(new String(cipher.doFinal(raw,14,raw.length-14),StandardCharsets.UTF_8));
+        return JsonCodec.object(new String(finishChunks(cipher,raw,14,raw.length-14),StandardCharsets.UTF_8));
     }
 }
