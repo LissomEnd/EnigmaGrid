@@ -123,6 +123,15 @@ host adapter tests, not a simulated Android Binder timeout or physical driver cr
 The saved GPU qualification is tied to the backend revision and Android build
 fingerprint; an OS build change requires requalification before GPU work resumes.
 
+The lab-only `GpuRecoveryQualification` instrumentation was run on RedMagic
+NX789J on 2026-10-04: a successful Vulkan request was followed by termination of
+the lab's own GPU process. The next request recovered with CPU-identical rows
+within the test's 12-second bound, and subsequent work kept the failed backend
+disabled. The production app and its GPU process were not terminated. This covers
+Binder process death, not every driver hang. Run with
+`adb shell am instrument -w org.enigmagrid.android.lab/org.enigmagrid.android.GpuRecoveryQualification`
+after installing the lab APK; remove the lab APK after testing.
+
 ## Throughput changes (0.4.8)
 
 Search-local Vulkan batches pack up to 16 keys per dispatch and cache only the
