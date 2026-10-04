@@ -109,8 +109,8 @@ public final class ComputeService extends Service {
                         network=new NetworkWorker(client,store,rows);
                         try{
                             outcome=null;
-                            String result=network.once(control,org.enigmagrid.core.Canonical.object("cpu_percent",Math.max(0,Math.min(100,settings.getInt("cpu_percent",25))),"gpu_percent",Math.max(0,Math.min(100,settings.getInt("gpu_percent",0))),"allow_cpu",true,"allow_gpu",rows!=null));
-                            outcome=result;
+                            String result=network.once(control,org.enigmagrid.core.Canonical.object("cpu_percent",Math.max(0,Math.min(100,settings.getInt("cpu_percent",25))),"gpu_percent",Math.max(0,Math.min(100,settings.getInt("gpu_percent",0))),"allow_cpu",true,"allow_gpu",rows!=null&&rows.available()));
+                            outcome=result+(rows==null?"":" | GPU dispatches: "+rows.dispatches()+(rows.failed()?" (CPU fallback)":""));
                         }catch(CoordinatorClient.HttpFailure e){
                             if(e.status==401||e.status==403||e.status==422)throw new IllegalStateException("Coordinator refused the request ("+e.status+"). Saved account and results retained.");
                             outcome="Coordinator temporarily unavailable; retrying in 30 seconds";

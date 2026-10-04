@@ -71,7 +71,7 @@ public final class MainActivity extends Activity {
 
         label(content, "Contribute on your terms", 22);
 
-        label(content, "Android 0.4.4 • experimental volunteer computing", 15);
+        label(content, "Android 0.4.5 • experimental volunteer computing", 15);
 
         label(content, "Help investigate an unresolved Enigma message. No decryption or scientific advantage is claimed.", 17);
 
@@ -101,9 +101,10 @@ public final class MainActivity extends Activity {
 
         boolean vulkan = getPackageManager().hasSystemFeature("android.hardware.vulkan.compute");
 
-        label(diagnostics, vulkan ? "Vulkan Compute detected — GPU qualification pending" : "Vulkan Compute unavailable — CPU fallback required", 16);
+        boolean savedGpu=GpuProcess.qualificationKey().equals(getSharedPreferences("worker-settings",0).getString("gpu_qualification",""));
+        label(diagnostics, vulkan ? (savedGpu?"Vulkan Compute qualified":"Vulkan Compute detected — GPU qualification pending") : "Vulkan Compute unavailable — CPU fallback required", 16);
 
-        TextView gpuStatus=label(diagnostics,"GPU computation has not been tested.",16);
+        TextView gpuStatus=label(diagnostics,savedGpu?"GPU checks passed on this device. Actual dispatches appear in Compute while contributing.":"GPU computation has not been tested.",16);
 
         Button gpuTest=new Button(this);gpuTest.setText("Test Vulkan computation");diagnostics.addView(gpuTest);
 
@@ -206,6 +207,8 @@ public final class MainActivity extends Activity {
         label(diagnostics,"Keep the ongoing notification enabled. Allow unrestricted battery use and auto-start in your phone settings. Android may still stop work; open the app and tap Start after a force-stop or reboot.",15);
         Button battery=new Button(this);battery.setText("Open app battery settings");diagnostics.addView(battery);
         battery.setOnClickListener(v->startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))));
+        label(diagnostics,"App updates",22);
+        new UpdatePanel(this,diagnostics);
         new DashboardPanel(this,dashboard);
         new AccountPanel(this,account);
 

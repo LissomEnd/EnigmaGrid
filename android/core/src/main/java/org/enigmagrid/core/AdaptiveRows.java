@@ -10,12 +10,15 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
     private final IntSupplier percent;
     private final BooleanSupplier cancel;
     private final WorkControl.Timing timing;
-    private boolean failed;
+    private volatile boolean failed;
+    private volatile long dispatches;
     private long nextDispatch;
     public AdaptiveRows(BoundedCrib.RowProvider accelerator,IntSupplier percent,BooleanSupplier cancel,WorkControl.Timing timing){
         this.accelerator=accelerator;this.percent=percent;this.cancel=cancel;this.timing=timing;
     }
     public boolean failed(){return failed;}
+    public long dispatches(){return dispatches;}
+    public boolean available(){return !failed&&percent.getAsInt()>0;}
     private void check(){if(Thread.currentThread().isInterrupted()||cancel.getAsBoolean())throw new CancellationException();}
     public int[][] rows(BoundedCrib.Key key,int offset,int length){
         check();int duty=percent.getAsInt();
@@ -35,7 +38,7 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
                 for(int x=0;x<26;x++)if(row[x]<0||row[x]>=26||row[x]==x||row[row[x]]!=x)throw new IllegalStateException("Invalid GPU permutation");
             }
             long end=timing.nanos();nextDispatch=end+Math.max(0,end-start)*(100-duty)/duty;
-            check();return rows;
+            check();dispatches++;return rows;
         } catch(CancellationException e){throw e;}
           catch(RuntimeException|LinkageError e){failed=true;check();return BoundedCrib.cpuRows(key,offset,length);}
     }

@@ -175,6 +175,9 @@ def sanitize_meta(meta):
          "cpu_count":max(1,min(1024,int(meta.get("cpu_count",1) or 1))),
          "gpus":gpus,
          "capabilities":[x for x in (meta.get("capabilities") or []) if x in {"cpu","cuda","rocm","gpu","opencl"}]}
+    if "supported_engines" in meta:
+        engines=meta.get("supported_engines")
+        out["supported_engines"]=[x for x in engines if x in {"portable_event_v1","bounded_crib_v1"}] if isinstance(engines,list) else []
     if isinstance(meta.get("effective_settings"),dict):
         out["effective_settings"]=normalize_settings(meta["effective_settings"])
     if "cpu_threads_effective" in meta:
@@ -263,6 +266,13 @@ def segment_config(row):
 
 def device_eligible(dev,seg):
     if not dev["enabled"] or dev["quarantined"]:return False,None,0
+    meta=parse_json(dev["meta_json"],{}) if "meta_json" in dev.keys() else {}
+    supported=meta.get("supported_engines")
+    if supported is not None and (not isinstance(supported,list) or seg["engine"] not in supported):
+        return False,None,0
+    # Android clients before engine negotiation must update instead of receiving legacy work.
+    if supported is None and str(meta.get("platform","")).startswith("Android"):
+        return False,None,0
     settings=normalize_settings(parse_json(dev["settings_json"],{}))
     caps=set(parse_json(dev["capabilities_json"],["cpu"]))
     cfg=segment_config(seg); req=set(cfg.get("requires",["cpu"]))

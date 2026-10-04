@@ -13,17 +13,19 @@ final class AccountPanel {
     private final CredentialStore store;
     private final TextView status;
     private final Button register;
+    private final LinearLayout enrollment;
     AccountPanel(Activity activity,LinearLayout parent){
         this.activity=activity;store=new CredentialStore(activity.getApplicationContext());
         text(parent,"Your account",22);
-        text(parent,"Register this Android device to receive credits for verified work. Registration does not start computation. Only compatible constrained-search jobs are requested.",16);
+        enrollment=new LinearLayout(activity);enrollment.setOrientation(LinearLayout.VERTICAL);parent.addView(enrollment);
+        text(enrollment,"Register this Android device to receive credits for verified work. Registration does not start computation. Only compatible constrained-search jobs are requested.",16);
         SharedPreferences settings=activity.getSharedPreferences("worker-settings",0);
-        EditText origin=field(parent,"Coordinator HTTPS address",false);origin.setText(settings.getString("server","https://enigma-grid.tail40f219.ts.net"));
-        EditText name=field(parent,"Display name (optional)",false);
-        EditText join=field(parent,"Existing contributor key (optional)",true);
-        text(parent,"Leave the contributor key empty to create a new private contributor profile. Supply your existing key to credit this device to that profile. Public credit is off for new profiles.",15);
+        EditText origin=field(enrollment,"Coordinator HTTPS address",false);origin.setText(settings.getString("server","https://enigma-grid.tail40f219.ts.net"));
+        EditText name=field(enrollment,"Display name (optional)",false);
+        EditText join=field(enrollment,"Existing contributor key (optional)",true);
+        text(enrollment,"Leave the contributor key empty to create a new private contributor profile. Supply your existing key to credit this device to that profile. Public credit is off for new profiles.",15);
         status=text(parent,"Checking saved account...",16);
-        register=new Button(activity);register.setText("Register this device");parent.addView(register);register.setEnabled(false);
+        register=new Button(activity);register.setText("Register this device");enrollment.addView(register);register.setEnabled(false);
         Button refresh=new Button(activity);refresh.setText("Refresh account status");parent.addView(refresh);refresh.setOnClickListener(v->refresh());
         register.setOnClickListener(v->{
             final CoordinatorClient client;
@@ -46,15 +48,25 @@ final class AccountPanel {
     private void refresh(){
         register.setEnabled(false);
         new Thread(()->{
-            String message;boolean canRegister=false;
+            String message;boolean canRegister=false,registered=false;
             try{
                 Map<String,Object> account=store.load();
-                if(account!=null)message="Registered with "+account.get("server")+". "+(account.containsKey("dashboard_token")?"Personal statistics are available from Dashboard.":"This device is linked to an existing profile; its dashboard token is not stored here.");
+                if(account!=null){
+                    registered=true;
+                    message="Registered with "+account.get("server")+".";
+                    if(account.get("dashboard_token") instanceof String){
+                        try{
+                            Map<String,Object> profile=new CoordinatorClient((String)account.get("server")).request("/api/me",object("dashboard_token",account.get("dashboard_token")),null);
+                            Object display=profile.get("display_name");
+                            message="Contributor: "+(display instanceof String&&!((String)display).trim().isEmpty()?display:"Unnamed contributor")+"\n"+message+"\nPersonal statistics are available from Dashboard.";
+                        }catch(Exception unavailable){message="Contributor name unavailable while the coordinator cannot be reached.\n"+message+" Saved credentials and credits are retained.";}
+                    }else message+=" This device is linked to an existing profile; its dashboard token is not stored here.";
+                }
                 else if(store.registrationAttempt().load()!=null)message="An earlier registration has an unknown outcome. A repeat request is blocked to prevent duplicate accounts. Credentials must be recovered before another registration.";
                 else{message="No account saved. Registration is optional until you choose to contribute.";canRegister=true;}
             }catch(Exception e){message="Saved account could not be read. It has not been replaced.";}
-            final String result=message;final boolean enabled=canRegister;
-            activity.runOnUiThread(()->{if(!activity.isDestroyed()){status.setText(result);register.setEnabled(enabled);}});
+            final String result=message;final boolean enabled=canRegister;final boolean hasAccount=registered;
+            activity.runOnUiThread(()->{if(!activity.isDestroyed()){status.setText(result);register.setEnabled(enabled);enrollment.setVisibility(hasAccount?android.view.View.GONE:android.view.View.VISIBLE);}});
         },"account-status").start();
     }
     private EditText field(LinearLayout parent,String hint,boolean secret){EditText field=new EditText(activity);field.setSingleLine(true);field.setHint(hint);field.setContentDescription(hint);field.setInputType(InputType.TYPE_CLASS_TEXT|(secret?InputType.TYPE_TEXT_VARIATION_PASSWORD:InputType.TYPE_TEXT_VARIATION_NORMAL));field.setSaveEnabled(!secret);if(secret)field.setImportantForAutofill(android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);parent.addView(field);return field;}

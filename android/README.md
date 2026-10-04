@@ -1,4 +1,4 @@
-# EnigmaGrid for Android 0.4.3
+# EnigmaGrid for Android 0.4.5
 
 Experimental volunteer client, Android 8+ (API 26). Install the signed APK from
 GitHub Releases, register under Account, then choose Start contributing.
@@ -39,3 +39,29 @@ Keep the signing key outside the repository. Run `:app:assembleRelease`.
 
 The separate lab variant is for isolated loopback instrumentation only; it is
 not included in release builds. Do not install it for normal contribution.
+
+## Updates and controls
+
+Device includes an automatic release check when the app opens, a manual retry,
+and opt-in automatic APK download on Wi-Fi. Optional updates can be postponed;
+the coordinator's minimum version prevents incompatible clients from taking new
+work. If a required version has no downloadable Android APK, the app reports it
+without deleting account data or pending results. APKs are checked for SHA-256,
+size, application ID, increasing version code and matching signing certificate.
+Installation uses Android's confirmation screen and per-app install permission.
+Background periodic update checking is not yet implemented.
+
+Compute displays Start while idle, a single Pause/Resume action and Stop while
+active, and automatically refreshed status. Device contains diagnostic tests.
+Android declares supported_engines=[bounded_crib_v1]; coordinator eligibility
+must honor that field so CPU capability does not imply portable_event_v1 support.
+
+Account displays the contributor name fetched from the coordinator and hides
+registration controls for enrolled devices. GPU availability is reported only
+when the qualified Vulkan backend is enabled and has not failed; Compute shows
+successful GPU dispatches. Dashboard GPU counts indicate eligible devices, not
+instantaneous utilization. A failed backend falls back to CPU.
+
+Update validation includes controlled transport tests for payload size, digest,
+redirects, package identity, version code and signer rejection. These adapter
+tests do not replace testing the Android system installer on each device.

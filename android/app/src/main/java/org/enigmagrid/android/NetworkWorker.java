@@ -14,6 +14,14 @@ final class NetworkWorker {
     private final org.enigmagrid.core.BoundedCrib.RowProvider rows;
     NetworkWorker(CoordinatorClient client,CredentialStore store){this(client,store,null);}
     NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows){this.rows=rows;this.client=client;this.heartbeat=client.fork();this.store=store;this.pending=store.pendingResults();}
+    private Map<String,Object> metadata(){
+        Map<String,Object> meta=Enrollment.metadata();
+        if(rows instanceof org.enigmagrid.core.AdaptiveRows&&((org.enigmagrid.core.AdaptiveRows)rows).available()){
+            meta.put("capabilities",Arrays.asList("cpu","bounded_crib_v1","gpu"));
+            meta.put("gpus",Arrays.asList(object("vendor","Vulkan","name","Qualified Vulkan compute","memory_mb",0)));
+        }
+        return meta;
+    }
     void cancel(){revoked=true;client.cancel();heartbeat.cancel();}
     @SuppressWarnings("unchecked")
     String once(BooleanSupplier control) throws Exception {return once(control,null);}
@@ -36,16 +44,16 @@ final class NetworkWorker {
         }
         check(control);
         if(settings!=null)client.request("/api/device/settings",object("settings",settings),token);
-        Map<String,Object> health=heartbeat.request("/api/heartbeat",object("meta",Enrollment.metadata()),token);
+        Map<String,Object> health=heartbeat.request("/api/heartbeat",object("meta",metadata()),token);
         allowed(health);
-        Map<String,Object> assignment=client.request("/api/lease",object("meta",Enrollment.metadata()),token);allowed(assignment);
+        Map<String,Object> assignment=client.request("/api/lease",object("meta",metadata()),token);allowed(assignment);
         Object raw=assignment.get("lease");if(raw==null)return "Waiting for compatible work";
         if(!(raw instanceof Map))throw new IllegalArgumentException("Invalid lease");
         Map<String,Object> lease=(Map<String,Object>)raw;WorkEnvelope.validate(lease);
         if(!(lease.get("id") instanceof String)||!(lease.get("work_token") instanceof String))throw new IllegalArgumentException("Missing lease credentials");
         ScheduledExecutorService renew=Executors.newSingleThreadScheduledExecutor();
         renew.scheduleWithFixedDelay(()->{
-            try{allowed(heartbeat.request("/api/heartbeat",object("meta",Enrollment.metadata()),token));}
+            try{allowed(heartbeat.request("/api/heartbeat",object("meta",metadata()),token));}
             catch(IllegalStateException e){revoked=true;}
             catch(Exception e){/* Offline computation may finish; durable result waits for reconnection. */}
         },20,20,TimeUnit.SECONDS);
@@ -53,7 +61,7 @@ final class NetworkWorker {
         try{result=WorkEnvelope.run(lease,()->revoked||control.getAsBoolean(),rows);}
         finally{renew.shutdownNow();heartbeat.cancel();}
         Map<String,Object> receipt=(Map<String,Object>)result.get("receipt");
-        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Math.max(0,(System.nanoTime()-started)/1_000_000_000L),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",Enrollment.metadata());
+        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Math.max(0,(System.nanoTime()-started)/1_000_000_000L),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
         pending.save(object("server",client.origin(),"owner",org.enigmagrid.core.Canonical.digest(token),"submission",submission));
         check(control);submit(submission,token);
         return "Result acknowledged; awaiting independent verification";
