@@ -1,4 +1,5 @@
 #include <jni.h>
+#include "host_memory.h"
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <string>
@@ -11,7 +12,7 @@ namespace {
 void checked(VkResult result){if(result!=VK_SUCCESS)throw std::runtime_error("Vulkan operation failed: "+std::to_string(result));}
 struct Compute {
     VkInstance instance{};VkDevice device{};VkPhysicalDevice physical{};VkQueue queue{};
-    VkBuffer buffers[2]{};VkDeviceMemory memory[2]{};VkShaderModule shader{};
+    VkBuffer buffers[2]{};VkDeviceMemory memory[2]{};bool coherent[2]{};VkShaderModule shader{};
     VkDescriptorSetLayout layout{};VkPipelineLayout pipelineLayout{};VkPipeline pipeline{};
     VkDescriptorPool descriptors{};VkCommandPool commands{};VkFence fence{};
     VkDescriptorSet set{};VkCommandBuffer cmd{};bool initialized=false;
@@ -23,9 +24,8 @@ struct Compute {
         VkBufferCreateInfo b{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};b.size=bytes;b.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;b.sharingMode=VK_SHARING_MODE_EXCLUSIVE;checked(vkCreateBuffer(device,&b,nullptr,&buffers[index]));
         VkMemoryRequirements requirements;vkGetBufferMemoryRequirements(device,buffers[index],&requirements);
         VkPhysicalDeviceMemoryProperties properties;vkGetPhysicalDeviceMemoryProperties(physical,&properties);
-        uint32_t type=UINT32_MAX;
-        for(uint32_t i=0;i<properties.memoryTypeCount;i++)if((requirements.memoryTypeBits&(1u<<i))&&(properties.memoryTypes[i].propertyFlags&(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))==(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){type=i;break;}
-        if(type==UINT32_MAX)throw std::runtime_error("No coherent host-visible buffer memory");
+        uint32_t type=enigmagrid::hostMemoryType(properties,requirements.memoryTypeBits);
+        coherent[index]=(properties.memoryTypes[type].propertyFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)!=0;
         VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=requirements.size;a.memoryTypeIndex=type;checked(vkAllocateMemory(device,&a,nullptr,&memory[index]));checked(vkBindBufferMemory(device,buffers[index],memory[index],0));
     }
     std::vector<uint32_t> run(const std::vector<uint32_t>& input,const std::vector<uint32_t>& code){
@@ -60,13 +60,13 @@ struct Compute {
         initialized=true;
         }
         const VkDeviceSize inputBytes=input.size()*4,outputBytes=input[0]*26*4;
-        void* mapped=nullptr;checked(vkMapMemory(device,memory[0],0,inputBytes,0,&mapped));memcpy(mapped,input.data(),inputBytes);vkUnmapMemory(device,memory[0]);
+        enigmagrid::uploadHost(device,memory[0],coherent[0],input.data(),inputBytes);
         checked(vkResetCommandPool(device,commands,0));checked(vkResetFences(device,1,&fence));
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;checked(vkBeginCommandBuffer(cmd,&begin));
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&set,0,nullptr);vkCmdDispatch(cmd,(input[0]*26+63)/64,1,1);
         VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);checked(vkEndCommandBuffer(cmd));
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;checked(vkQueueSubmit(queue,1,&submit,fence));checked(vkWaitForFences(device,1,&fence,VK_TRUE,5000000000ULL));
-        std::vector<uint32_t> output(input[0]*26);checked(vkMapMemory(device,memory[1],0,outputBytes,0,&mapped));memcpy(output.data(),mapped,outputBytes);vkUnmapMemory(device,memory[1]);return output;
+        std::vector<uint32_t> output(input[0]*26);enigmagrid::downloadHost(device,memory[1],coherent[1],output.data(),outputBytes);return output;
     }
 };
 std::mutex computeMutex;

@@ -364,3 +364,17 @@ fallback at six window boundaries, avoids repeated failed GPU attempts, and
 checks that unavailable acceleration is not reported as active. This tests
 missing JNI support, not physical Vulkan driver compatibility. No new phone
 build is needed for this host-only regression.
+
+## Native compatibility work pending release
+
+The next native backend retains the preference for coherent host-visible memory,
+but also supports non-coherent host-visible allocations using explicit flush and
+invalidate operations. Dedicated allocations are mapped in full; readback still
+follows the compute barrier and completed fence. Controlled native tests exercise
+memory selection, synchronization order and cleanup after failures. Source
+compilation passed for Android API 26 ARM64, ARMv7 and x86_64. These tests do not
+prove execution on a physical non-coherent GPU driver.
+
+This change is not in the installed 0.4.14 APK. Its GPU qualification generation
+changes, so a future build requires a fresh on-device GPU check; CPU contribution
+remains available while acceleration is unqualified.
