@@ -50,6 +50,25 @@ updated. Manifest/resource compilation and lint passed; a physical phone-to-phon
 transfer has not been tested. See Android's
 [backup rules](https://developer.android.com/identity/data/autobackup).
 
+## Reporting another device
+
+Use the [Android compatibility form](https://github.com/LissomEnd/EnigmaGrid/issues/new?template=android_compatibility.yml)
+for successful tests as well as failures. CPU-only contributions are welcome.
+Record the app version, model and Android version, the CPU check and optional
+Vulkan computation check under Device. Report untested steps as untested.
+If you observe background work, include the observation duration and whether the
+screen was off; distinguish acknowledged receipts from independently verified work.
+Do not include tokens, serial numbers, private addresses or full logs.
+
+Compatibility evidence has different scopes:
+
+| Evidence | What it establishes | What remains unproven |
+| --- | --- | --- |
+| Packaged ARM64, ARMv7 and x86_64 libraries | Native binaries are supplied for those architectures | Installation and execution on every model |
+| Host CPU/adapter tests | Receipt parity and fallback behavior in controlled cases | Android vendor driver behavior |
+| RedMagic NX789J physical tests | Observed CPU/GPU operation on the tested device and OS | Other Adreno models, Mali and other GPU families |
+| A successful Device GPU check | The tested backend produced matching output during that check | Sustained utilization, speed advantage or future driver stability |
+
 ## Build
 
 Use JDK 17, Gradle 8.9, Android SDK 35, NDK 27.2.12479018 and CMake 3.22.1.

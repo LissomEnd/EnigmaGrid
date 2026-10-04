@@ -19,6 +19,7 @@ body:
       label: Component
       options:
         - Windows tray / Setup
+        - Android app
         - Worker
         - Updater
         - Public dashboard
@@ -29,8 +30,8 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Windows and hardware
-      description: Windows version, CPU/GPU model, GPU driver version if relevant, and chosen CPU/GPU percentages. Do not include your PC name or serial number.
+      label: Operating system and hardware
+      description: Windows or Android version, CPU/GPU model, GPU driver version if known, and chosen CPU/GPU percentages. Do not include your device name or serial number.
   - type: textarea
     id: steps
     attributes:

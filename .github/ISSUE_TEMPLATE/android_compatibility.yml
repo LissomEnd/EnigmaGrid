@@ -1,0 +1,71 @@
+name: Android compatibility result
+description: Share a successful or failed test on an Android CPU/GPU.
+title: "[Android compatibility] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every contribution is welcome, including CPU-only results. Use the signed experimental APK from Releases.
+        In Device, run Check CPU engine and, optionally, Test Vulkan computation. Record the actual outcomes below.
+        Do not force overheating, exhaust memory, disable thermal protection, or change your preferred resource limits for this report.
+        Omit serial numbers, account names, tokens, IP addresses and full device logs. A passing test does not prove a decrypted message or full GPU utilization.
+  - type: input
+    id: version
+    attributes:
+      label: EnigmaGrid version
+      placeholder: "0.4.13"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Phone model, Android version and CPU/GPU model if known
+      description: Model names only; no serial number or personal device name.
+    validations:
+      required: true
+  - type: input
+    id: abi
+    attributes:
+      label: Architectures shown in Device
+      placeholder: "arm64-v8a; unknown is acceptable"
+  - type: dropdown
+    id: cpu
+    attributes:
+      label: CPU engine check
+      options:
+        - Not tested
+        - Passed
+        - Failed
+        - Could not install or open the app
+    validations:
+      required: true
+  - type: dropdown
+    id: gpu
+    attributes:
+      label: Vulkan computation check
+      options:
+        - Not tested
+        - Passed
+        - Failed; CPU remains available
+        - App crashed or stopped responding
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Test output and reproduction steps
+      description: Copy the CPU/GPU test message, or describe the failure. For crashes, state which action triggered it. Do not paste full logs.
+    validations:
+      required: true
+  - type: textarea
+    id: contribution
+    attributes:
+      label: Optional contribution and background observation
+      description: Report CPU/GPU slider settings, charging state, observation duration, whether screen was off, whether results were acknowledged, and any pause/resume problem. Distinguish acknowledged work from independently verified work. Leave untested items marked untested.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, serial numbers, private addresses and personal data.
+          required: true
