@@ -64,5 +64,5 @@ final class DashboardPanel {
         }
     }
     private static String title(String key){String s=key.replace('_',' ');return s.isEmpty()?s:Character.toUpperCase(s.charAt(0))+s.substring(1);}
-    private TextView text(LinearLayout parent,String value,int size){TextView view=new TextView(activity);view.setText(value);view.setTextSize(size);view.setTextColor(size>=21?0xff43ddd0:0xffe2edf2);if(size>=21)view.setTypeface(android.graphics.Typeface.DEFAULT,1);view.setPadding(0,16,0,16);parent.addView(view);return view;}
+    private TextView text(LinearLayout parent,String value,int size){TextView view=new TextView(activity);view.setText(value);view.setTextSize(size);view.setTextColor(size>=21?0xff43ddd0:0xffe2edf2);if(size>=21)view.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD);view.setPadding(0,16,0,16);parent.addView(view);return view;}
 }

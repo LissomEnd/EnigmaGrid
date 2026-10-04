@@ -164,7 +164,7 @@ network sockets off the calling thread, and status distinguishes computation fro
 network waits. The reported production UI stall has not yet been reproduced or
 confirmed resolved; these changes are not proof of its root cause.
 
-## Development after 0.4.9
+## Client changes in 0.4.10
 
 Normal clients now negotiate up to eight leases per request when the coordinator
 provides the batch endpoint. HTTP 404 selects and caches single-lease mode for
