@@ -36,6 +36,14 @@ For versioned test directories, set `ENIGMA_TEST_OLD_CANDIDATE` to the extracted
 
 Run the frozen tests sequentially in a Windows user session without an active volunteer client. The worker intentionally holds a per-user singleton mutex, so concurrent fixtures interfere even with separate state directories. Do not stop a production client merely to make a fixture pass; use a separate test session if needed.
 
+## Local package retention
+
+This source change is prepared for a future consolidated release; the published 0.4.4 candidate does not include it.
+
+After a new runtime passes its health check, the updater may remove recognized old download packages from the private `updates/<version>` cache. It retains the activated version, the previously running version when known, the newest older cached package, and newer or pending/staged versions. An existing rollback backup or unreadable pending metadata prevents cleanup. Unknown files, incomplete downloads, symbolic links and reparse points are preserved. Identity files and installation files are outside this cleanup.
+
+This is conservative storage housekeeping, not an update-policy change. It does not rotate worker logs, promise a fixed cache size when recovery artifacts remain, or remove the only recovery package after a failed update. `tests/test_update_package_retention.py` checks synthetic files only.
+
 ## Key handling
 The private Ed25519 release key must remain outside the repository. Normal signing decrypts it only in memory from the protected local vault; no plaintext PEM is written during normal signing.
 

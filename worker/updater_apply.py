@@ -201,6 +201,76 @@ def cleanup_install(path,wait_pid=0,timeout=45):
     if last:raise last
     return 0
 
+def prune_update_packages(state, current_version, previous_version=None):
+    """Remove only recognized stale package files after successful activation.
+
+    Unrecognized files, links, incomplete downloads, staging and rollback state
+    are preserved. Never recurse or touch the installation/identity directory.
+    """
+    import stat
+    state=Path(state).absolute()
+    def ordinary(path):
+        try:
+            info=path.lstat()
+            return not path.is_symlink() and not (getattr(info,'st_file_attributes',0)&getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0x400))
+        except OSError:return False
+    parent=state.parent
+    if not all(ordinary(p) for p in (parent,*parent.parents)):return []
+    cache=parent/'updates'
+    if not cache.is_dir() or not ordinary(cache):return []
+    base=cache.resolve()
+    version=lambda value:bool(isinstance(value,str) and re.fullmatch(r'\d+\.\d+\.\d+',value))
+    if not version(current_version):return []
+    number=lambda value:tuple(int(x) for x in value.split('.'))
+    # An extant backup may contain the only rollback runtime. Without reliable
+    # version metadata, retain every package until that recovery state is gone.
+    if (parent/'update-backup').exists() or (parent/'update-backup').is_symlink():return []
+    keep={current_version}
+    if version(previous_version):keep.add(previous_version)
+    for marker in parent.glob('update-stage-*'):
+        name=marker.name.removeprefix('update-stage-')
+        if version(name):keep.add(name)
+    for filename in ('update_state.json','update_status.json','update-pending.json'):
+        marker=parent/filename
+        if not marker.exists():continue
+        if not ordinary(marker) or marker.stat().st_size>65536:return []
+        try:record=json.loads(marker.read_text(encoding='utf-8'))
+        except (OSError,ValueError):return []
+        if not isinstance(record,dict):return []
+        for key in ('version','current_version','downloaded_version','pending_version'):
+            if version(record.get(key)):keep.add(record[key])
+    packages=[]
+    for directory in cache.iterdir():
+        if not version(directory.name) or not ordinary(directory) or not directory.is_dir():continue
+        if directory.resolve().parent!=base:continue
+        manifest=directory/'update-manifest.json'
+        try:
+            if not ordinary(manifest) or manifest.stat().st_size>65536:continue
+            record=json.loads(manifest.read_text(encoding='utf-8'))
+            asset=record.get('asset_name','')
+            if record.get('schema')!=1 or record.get('version')!=directory.name:continue
+            if not isinstance(asset,str) or Path(asset).name!=asset or not asset.endswith('.zip'):continue
+            names={asset,'update-manifest.json','update-manifest.sig'}
+            files=list(directory.iterdir())
+            if {item.name for item in files}!=names:continue
+            if not all(item.is_file() and ordinary(item) and item.resolve().parent==directory.resolve() for item in files):continue
+            packages.append((directory,files))
+        except (OSError,ValueError,TypeError,AttributeError):continue
+    older=[directory.name for directory,_ in packages if number(directory.name)<number(current_version)]
+    if older:keep.add(max(older,key=number))
+    removed=[]
+    for directory,files in packages:
+        if directory.name in keep or number(directory.name)>=number(current_version):continue
+        # Recheck containment and links immediately before the limited deletes.
+        if not ordinary(cache) or cache.resolve()!=base or not ordinary(directory) or directory.resolve().parent!=base:continue
+        try:
+            if not all(ordinary(item) and item.resolve().parent==directory.resolve() for item in files):continue
+            for item in files:item.unlink()
+            directory.rmdir();removed.append(directory.name)
+        except OSError:continue
+    return removed
+
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--cleanup-install",default="")
@@ -231,6 +301,7 @@ def main():
     if backup.exists():shutil.rmtree(backup,ignore_errors=True)
     backup.mkdir()
     health=state.with_name("worker-health.json")
+    previous_version=read_health(health).get("version")
     try:health.unlink()
     except Exception:pass
 
@@ -277,5 +348,9 @@ def main():
             try:rollback_frozen(root,backup,["EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt"])
             except Exception:pass
         raise
+
+    # Cache cleanup cannot turn a healthy completed update into a rollback.
+    try:prune_update_packages(state,target,previous_version)
+    except Exception:pass
 
 if __name__=="__main__":main()
