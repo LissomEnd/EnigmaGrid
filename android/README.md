@@ -268,3 +268,11 @@ the final acknowledgement. Host regressions require computation to advance while
 an upload is blocked and verify recovery of both receipts after the first upload
 fails. This change postdates the local APK layout check and needs a consolidated
 build and device performance measurement; no throughput gain is claimed yet.
+
+The pending Windows client also negotiates up to eight reservations per request.
+It refreshes controls while consuming the batch and refetches expired local
+snapshots after long pauses. Only HTTP 404 selects legacy single-job mode;
+other errors are reported. Host tests exercise eight completions and safe stop
+through the full worker loop, plus expired reservations, mandatory updates,
+revocation, malformed batches and legacy fallback. Installed clients are still
+unchanged; these checks do not measure production throughput.

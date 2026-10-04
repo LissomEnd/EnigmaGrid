@@ -68,6 +68,8 @@ jobs:
         run: python tests/test_worker_constrained_parallel.py
       - name: Combined lease control snapshot
         run: python tests/test_worker_lease_snapshot.py
+      - name: Windows bounded lease batches
+        run: python tests/test_worker_batch_requests.py
       - name: Durable completion recovery
         run: python tests/test_pending_completion.py
       - name: Lease renewal during completion upload

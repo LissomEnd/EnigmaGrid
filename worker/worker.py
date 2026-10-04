@@ -4,6 +4,7 @@ import ctypes
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import platform
 import socket
@@ -270,6 +271,8 @@ def heartbeat_once(state,runtime):
     return apply_coordinator_state(post(state["server"],"/api/heartbeat",{"meta":meta(runtime)},state["device_token"]),runtime)
 
 def request_work(state,runtime):
+    if runtime.get('_batch_requests',False):
+        return request_batch_work(state,runtime)
     reply=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
     # New coordinators return the same control snapshot with the lease.
     # Older servers still need a heartbeat before executing any returned work.
@@ -278,6 +281,46 @@ def request_work(state,runtime):
     else:
         control=heartbeat_once(state,runtime)
     return reply,control
+
+def request_batch_work(state,runtime):
+    """Bounded reservations with legacy fallback and expiring local snapshots."""
+    queued=runtime.get('_lease_queue',[])
+    # Server renewals may extend these deadlines. Refetching an old snapshot is
+    # safer than assuming that a reservation is still ours after a long pause.
+    if queued and any(float(item['expires_at'])<=time.time() for item in queued):
+        queued=[];runtime['_lease_queue']=queued
+    if queued:
+        if time.monotonic()-runtime.get('_batch_controls_at',0)>=20:
+            control=heartbeat_once(state,runtime)
+            runtime['_batch_controls']=control
+            runtime['_batch_controls_at']=time.monotonic()
+        control=runtime['_batch_controls']
+        if not runtime.get('enabled',False) or control.get('update_required'):
+            runtime['_lease_queue']=[]
+            return {'lease':None,**control},control
+        return {'lease':queued.pop(0)},control
+    try:
+        reply=post(state['server'],'/api/leases',{'meta':meta(runtime),'count':8},state['device_token'])
+    except urllib.error.HTTPError as error:
+        if error.code!=404:raise
+        runtime['_batch_requests']=False
+        return request_work(state,runtime)
+    control=apply_coordinator_state(reply,runtime) if all(k in reply for k in ('settings','enabled','quarantined')) else heartbeat_once(state,runtime)
+    if not runtime.get('enabled',False) or reply.get('enabled') is False or reply.get('quarantined') or reply.get('update_required') or control.get('update_required'):
+        return {'lease':None,'update_required':bool(reply.get('update_required') or control.get('update_required'))},control
+    leases=reply.get('leases')
+    if not isinstance(leases,list) or len(leases)>8:raise ValueError('Invalid lease batch')
+    ids=set()
+    for lease in leases:
+        if not isinstance(lease,dict) or not isinstance(lease.get('id'),str) or not lease['id'] or lease['id'] in ids or not isinstance(lease.get('work_token'),str):
+            raise ValueError('Invalid or duplicate lease')
+        if not isinstance(lease.get('expires_at'),(int,float)) or not math.isfinite(lease['expires_at']):
+            raise ValueError('Invalid lease deadline')
+        if lease['expires_at']<=time.time():raise ValueError('Coordinator returned expired work')
+        ids.add(lease['id'])
+    runtime['_lease_queue']=list(leases)
+    runtime['_batch_controls']=control;runtime['_batch_controls_at']=time.monotonic()
+    return {'lease':runtime['_lease_queue'].pop(0) if leases else None},control
 
 def heartbeat_loop(stop,state,runtime):
     while not stop.wait(20):
@@ -520,7 +563,7 @@ def set_preferences(state,cpu,gpu):
 
 def work(args,state):
     runtime={"settings":normalize_settings(state.get("settings",{})),"enabled":True,
-             "_parallel_constrained":True}
+             "_parallel_constrained":True,"_batch_requests":True}
     try:
         return _work(args,state,runtime)
     finally:
