@@ -143,9 +143,10 @@ def solve_board(rows,edges,*,max_pairs=13,node_limit=100000,solution_limit=10):
     def extend(p,used,a,b):
         # Internal states are involutions. Only a new non-self mapping adds a
         # cable; carry its count rather than scanning all 26 endpoints again.
-        if p[a] not in (-1,b) or p[b] not in (-1,a):return None
-        if p[a]==b:return p,used
-        count=used+int(a!=b)
+        pa=p[a];pb=p[b]
+        if (pa!=-1 and pa!=b) or (pb!=-1 and pb!=a):return None
+        if pa==b:return p,used
+        count=used+(a!=b)
         if count>max_pairs:return None
         q=list(p);q[a]=b;q[b]=a
         return tuple(q),count
