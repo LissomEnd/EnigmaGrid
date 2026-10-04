@@ -35,3 +35,13 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
 dependencies { implementation project(':core') }
+
+// Version overrides are restricted to the isolated updater qualification APK.
+androidComponents {
+    onVariants(selector().withBuildType('lab')) { variant ->
+        variant.outputs.each { output ->
+            output.versionName.set(providers.gradleProperty('labVersionName').orElse('0.4.7'))
+            output.versionCode.set(providers.gradleProperty('labVersionCode').map { it.toInteger() }.orElse(3))
+        }
+    }
+}
