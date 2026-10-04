@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Bounded IPC waits; native crash or timeout leaves CPU fallback available. */
 final class GpuProcess implements AutoCloseable {
-    static String qualificationKey(){return "ipc-v1:"+Build.FINGERPRINT;}
+    static String qualificationKey(){return "ipc-v2-reuse:"+Build.FINGERPRINT;}
     private final Context context;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final HandlerThread callbacks=new HandlerThread("gpu-replies");

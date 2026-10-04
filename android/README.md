@@ -80,3 +80,9 @@ full hardware utilization for every job.
 Parallel qualification compares complete receipts with Python and sequential
 Java, including candidate caps and 128-core domains. Other Android hardware
 still requires on-device qualification.
+
+Version 0.4.7 reuses bounded Vulkan buffers, device, pipeline and synchronization
+objects across serialized dispatches. Errors invalidate the cache. GPU
+qualification must be repeated after this backend change; CPU remains available.
+RedMagic validation passed 4,992 contact comparisons, 60 full receipts and
+network replay across process restart with independent Python verification.
