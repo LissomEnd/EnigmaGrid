@@ -193,6 +193,29 @@ def save_state(path,obj):
 def save_plain_json(path,obj):
     atomic_write(path,json.dumps(obj,separators=(",",":")).encode("utf-8"))
 
+def pending_path(state_path):
+    return Path(state_path).with_name(Path(state_path).name+".pending-result")
+
+def persist_completion(state_path,state,payload):
+    path=pending_path(state_path)
+    if path.exists():
+        raise RuntimeError("A saved result must be delivered before computing new work")
+    save_state(path,{"server":state["server"],"device_id":state["device_id"],"payload":payload})
+
+def deliver_pending(state_path,state):
+    path=pending_path(state_path)
+    saved=load_state(path)
+    if saved is None:return None
+    if saved.get("server")!=state["server"] or saved.get("device_id")!=state["device_id"]:
+        raise RuntimeError("Saved result belongs to another coordinator or device; retained locally")
+    ack=post(state["server"],"/api/complete",saved["payload"],state["device_token"],timeout=120)
+    if not isinstance(ack,dict) or ack.get("ok") is not True:
+        raise RuntimeError("Coordinator did not acknowledge saved result; retained locally")
+    # Lost acknowledgements and crashes before unlink are safe: completion is
+    # idempotent on the coordinator, including duplicate submissions.
+    path.unlink()
+    return ack
+
 def control_path(state_path):
     return Path(state_path).with_name("control.json")
 
@@ -538,6 +561,10 @@ def _work(args,state,runtime):
                 if updater.launch_apply(INSTALL_ROOT):
                     print("Applying verified update at safe point.",flush=True)
                     return 0
+            recovered=deliver_pending(state_path,state)
+            if recovered is not None:
+                print(json.dumps({"recovered_completion":True,"ack":recovered}),flush=True)
+                if args.once:return 0
             got,hb=request_work(state,runtime)
             if hb.get("update_required") and updater:updater.force_check()
             if not runtime["enabled"]:
@@ -565,13 +592,15 @@ def _work(args,state,runtime):
             stop=threading.Event();th=threading.Thread(target=heartbeat_loop,args=(stop,state,runtime),daemon=True);th.start()
             publish_health(runtime,"computing")
             t=time.time()
-            try:result,candidates=execute(lease,runtime,state_path)
+            try:
+                result,candidates=execute(lease,runtime,state_path)
+                secs=time.time()-t
+                persist_completion(state_path,state,
+                         {"lease_id":lease["id"],"work_token":lease["work_token"],"compute_seconds":secs,
+                          "candidate_count":candidates,"result":result,"meta":meta(runtime)})
+                publish_health(runtime,"uploading")
+                ack=deliver_pending(state_path,state)
             finally:stop.set();th.join(timeout=2)
-            secs=time.time()-t
-            ack=post(state["server"],"/api/complete",
-                     {"lease_id":lease["id"],"work_token":lease["work_token"],"compute_seconds":secs,
-                      "candidate_count":candidates,"result":result,"meta":meta(runtime)},
-                     state["device_token"],timeout=120)
             print(json.dumps({"completed":lease["id"],"seconds":round(secs,3),"ack":ack}),flush=True)
             if updater and updater.stop_requested:
                 print("Mandatory update declined: current work finished; closing.",flush=True)
@@ -593,6 +622,27 @@ def _work(args,state,runtime):
             if args.once:return 2
             time.sleep(10)
 
+def constrained_self_test():
+    """Offline packaged-worker probe; no enrollment or production state access."""
+    sys.path.insert(0,str(ROOT/'solver/runtime/src'))
+    from search.crib_work import run
+    job=dict(engine='bounded_crib_v1',ciphertext='A'*72,crib='B'*24,offset=0,
+             core_indices=list(range(32)),model='clean',pairs=10,
+             budgets=dict(node_limit=10,board_limit=1,completion_limit=1,candidate_limit=1))
+    lease=dict(engine='bounded_crib_v1',start_unit=0,end_unit=1,
+               config=dict(job=job,requires=['cpu','bounded_crib_v1']))
+    runtime={'settings':{'cpu_percent':min(100,max(1,200//(os.cpu_count() or 1))),
+                         'allow_cpu':True},'_parallel_constrained':True}
+    try:
+        expected=run(lease)
+        for _ in range(2):
+            result,_=run_constrained(lease,runtime,None)
+            if result!=expected:raise RuntimeError('Constrained receipt mismatch')
+        print(json.dumps({'ok':True,'test':'constrained_process_reuse','version':VERSION}))
+    finally:
+        pool=runtime.pop('_constrained_pool',None)
+        if pool is not None:pool.close()
+
 def main():
     ap=argparse.ArgumentParser(description="Volunteer Enigma Grid worker v0.3")
     ap.add_argument("--server",default=os.environ.get("ENIGMA_GRID_SERVER",""));ap.add_argument("--registration-code",default="")
@@ -600,6 +650,7 @@ def main():
     ap.add_argument("--private-credit",action="store_true");ap.add_argument("--state",default=str(Path.home()/".enigma-volunteer"/"client.json"))
     ap.add_argument("--show-secrets",action="store_true")
     ap.add_argument("--self-test",action="store_true")
+    ap.add_argument("--self-test-constrained",action="store_true")
     ap.add_argument("--client-summary-json",action="store_true")
     ap.add_argument("--dashboard-token",action="store_true",help="Print the private dashboard token locally")
     ap.add_argument("--once",action="store_true");ap.add_argument("--disable",action="store_true")
@@ -607,6 +658,8 @@ def main():
     ap.add_argument("--set-preferences",action="store_true");ap.add_argument("--cpu-percent",type=int,default=50)
     ap.add_argument("--gpu-percent",type=int,default=0);ap.add_argument("--idle-seconds",type=int,default=5)
     args=ap.parse_args()
+    if args.self_test_constrained:
+        constrained_self_test();return
     if args.self_test:
         h=hardware();assert "cpu_count" in h
         import numpy, numba

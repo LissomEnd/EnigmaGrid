@@ -21,3 +21,5 @@ __pycache__/
 .update-stage-*/
 .update-backup/
 updates/
+*.pending-result
+*.pending-result.*.tmp
