@@ -10,7 +10,7 @@ import static org.enigmagrid.core.Canonical.object;
 
 /** Explicit enrollment only; never called automatically on app launch. */
 final class Enrollment {
-    static Map<String,Object> metadata(){return object("worker_version","0.4.10","platform","Android "+Build.VERSION.RELEASE,"machine",Build.SUPPORTED_ABIS[0],"cpu_count",Runtime.getRuntime().availableProcessors(),"gpus",Collections.emptyList(),"capabilities",Arrays.asList("cpu","bounded_crib_v1"),"supported_engines",Arrays.asList("bounded_crib_v1"));}
+    static Map<String,Object> metadata(){return object("worker_version","0.4.12","platform","Android "+Build.VERSION.RELEASE,"machine",Build.SUPPORTED_ABIS[0],"cpu_count",Runtime.getRuntime().availableProcessors(),"gpus",Collections.emptyList(),"capabilities",Arrays.asList("cpu","bounded_crib_v1"),"supported_engines",Arrays.asList("bounded_crib_v1"));}
     static synchronized Map<String,Object> register(CoordinatorClient client,CredentialStore store,String name,String joinKey,Map<String,Object> settings,BooleanSupplier cancel) throws Exception {
         return register(client,store,name,joinKey,settings,false,cancel);
     }
