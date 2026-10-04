@@ -23,7 +23,10 @@ android {
         }
     }
     buildTypes {
-        release { signingConfig signingConfigs.release }
+        release {
+            // Managed candidate builds stay unsigned; signing material remains local.
+            if (System.getenv('ENIGMAGRID_ANDROID_KEYSTORE')) signingConfig signingConfigs.release
+        }
         lab {
             initWith debug
             applicationIdSuffix '.lab'

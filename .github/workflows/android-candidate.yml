@@ -1,0 +1,84 @@
+name: Qualify unsigned Android candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-candidate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Select runner Java 17
+        run: |
+          test -x "$JAVA_HOME_17_X64/bin/java"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          "$JAVA_HOME_17_X64/bin/java" -version
+      - name: Install pinned Android build packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          # Preserve sdkmanager's exit status, not yes's expected SIGPIPE.
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          set -o pipefail
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Install checksum-pinned Gradle 8.9
+        run: |
+          curl --fail --location --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$RUNNER_TEMP/gradle-8.9-bin.zip"
+          # Official services.gradle.org/distributions/gradle-8.9-bin.zip.sha256
+          echo "d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab  $RUNNER_TEMP/gradle-8.9-bin.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/gradle-8.9-bin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+      - name: Build unsigned release and lint all configured ABIs
+        run: |
+          test -z "${ENIGMAGRID_ANDROID_KEYSTORE:-}"
+          test -z "${ENIGMAGRID_ANDROID_STORE_PASSWORD:-}"
+          gradle -p android --no-daemon --max-workers=2 :app:assembleRelease :app:lintRelease
+      - name: Check artifact and record qualification manifest
+        run: |
+          mkdir -p android-candidate
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk android-candidate/
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 -v 4 android-candidate/app-release-unsigned.apk
+          python3 android/core/qualify_apk_layout.py android-candidate/app-release-unsigned.apk
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, zipfile
+          apk = pathlib.Path('android-candidate/app-release-unsigned.apk')
+          with zipfile.ZipFile(apk) as z:
+              expected = {'arm64-v8a', 'armeabi-v7a', 'x86_64'}
+              found = {n.split('/')[1] for n in z.namelist() if n.startswith('lib/') and n.endswith('/libenigmagrid_gpu.so')}
+              assert found == expected, (found, expected)
+              assert 'assets/shaders/enigma_rows.comp.spv' in z.namelist()
+          result = dict(commit=os.environ['GITHUB_SHA'], run_id=os.environ['GITHUB_RUN_ID'],
+              unsigned=True, publish_release=False, java='17', gradle='8.9', compile_sdk=35,
+              build_tools='35.0.0', ndk='27.2.12479018', cmake='3.22.1', abis=sorted(found),
+              command='gradle -p android --no-daemon --max-workers=2 :app:assembleRelease :app:lintRelease',
+              apk_sha256=hashlib.sha256(apk.read_bytes()).hexdigest(), apk_bytes=apk.stat().st_size)
+          pathlib.Path('android-candidate/qualification.json').write_text(json.dumps(result, indent=2)+'\n')
+          PY
+      - name: Upload unsigned candidate only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-unsigned-candidate-${{ github.sha }}
+          path: android-candidate/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload lint diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-lint-${{ github.sha }}
+          path: |
+            android/app/build/reports/lint-results-release.html
+            android/app/build/reports/lint-results-release.xml
+          if-no-files-found: warn
+          retention-days: 7
