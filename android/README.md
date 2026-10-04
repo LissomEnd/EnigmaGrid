@@ -114,6 +114,15 @@ for testing. Background checks were exercised through Android JobScheduler on Re
 (including a forced test invocation), not an elapsed six-hour reliability test.
 Advanced volunteer account management is still pending.
 
+Run `core/qualify_accelerator.py --jdk PATH` with a Windows JDK 17 to check the
+CPU reference, adaptive fallback, batching and parallel receipt parity. Controlled
+backend tests also cover a timeout-shaped exception, cancellation during a driver
+failure and cancellation returned by the backend. A failed backend is latched off;
+the same work uses CPU rows, while cancellation remains cancellation. These are
+host adapter tests, not a simulated Android Binder timeout or physical driver crash.
+The saved GPU qualification is tied to the backend revision and Android build
+fingerprint; an OS build change requires requalification before GPU work resumes.
+
 ## Throughput changes (0.4.8)
 
 Search-local Vulkan batches pack up to 16 keys per dispatch and cache only the

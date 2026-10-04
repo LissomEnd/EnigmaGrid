@@ -30,6 +30,17 @@ public class AdaptiveRowsChecks {
   },()->100,()->false,clock);
   try{preparationCancelled.prepare(Collections.singletonList(key),3,16);throw new AssertionError("preparation cancellation swallowed");}catch(CancellationException good){}
   if(preparationCancelled.failed())throw new AssertionError("cancellation disabled GPU");
+  int[] timeoutCalls={0};
+  AdaptiveRows timedOut=new AdaptiveRows((k,o,n)->{timeoutCalls[0]++;throw new IllegalStateException("GPU process timeout",new java.util.concurrent.TimeoutException());},()->100,()->false,clock);
+  if(!Arrays.deepEquals(expected,timedOut.rows(key,3,16)))throw new AssertionError("timeout CPU parity");
+  timedOut.rows(key,3,16);
+  if(timeoutCalls[0]!=1||!timedOut.failed()||timedOut.available())throw new AssertionError("timeout backend reused");
+  boolean[] cancelledDuringDispatch={false};
+  AdaptiveRows interruptedDriver=new AdaptiveRows((k,o,n)->{cancelledDuringDispatch[0]=true;throw new IllegalStateException("driver disconnected");},()->100,()->cancelledDuringDispatch[0],clock);
+  try{interruptedDriver.rows(key,3,16);throw new AssertionError("stop during driver failure ignored");}catch(CancellationException good){}
+  AdaptiveRows cancelledDriver=new AdaptiveRows((k,o,n)->{throw new CancellationException("GPU operation cancelled");},()->100,()->false,clock);
+  try{cancelledDriver.rows(key,3,16);throw new AssertionError("driver cancellation swallowed");}catch(CancellationException good){}
+  if(cancelledDriver.failed())throw new AssertionError("driver cancellation disabled GPU");
   System.out.println("PASS: parity, GPU duty, disabled GPU, native failure fallback, failure latch, malformed output, cancellation");
  }
 }
