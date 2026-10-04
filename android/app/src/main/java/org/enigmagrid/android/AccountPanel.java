@@ -23,7 +23,8 @@ final class AccountPanel {
         EditText origin=field(enrollment,"Coordinator HTTPS address",false);origin.setText(settings.getString("server","https://enigma-grid.tail40f219.ts.net"));
         EditText name=field(enrollment,"Display name (optional)",false);
         EditText join=field(enrollment,"Existing contributor key (optional)",true);
-        text(enrollment,"Leave the contributor key empty to create a new private contributor profile. Supply your existing key to credit this device to that profile. Public credit is off for new profiles.",15);
+        text(enrollment,"Leave the contributor key empty to create a new profile. An existing key keeps that profile and its visibility settings. Public rankings include verified work only.",15);
+        CheckBox publicCredit=new CheckBox(activity);publicCredit.setText("Show my name and verified contributions in the public leaderboard");publicCredit.setTextColor(0xffe2edf2);enrollment.addView(publicCredit);
         status=text(parent,"Checking saved account...",16);
         register=new Button(activity);register.setText("Register this device");enrollment.addView(register);register.setEnabled(false);
         Button refresh=new Button(activity);refresh.setText("Refresh account status");parent.addView(refresh);refresh.setOnClickListener(v->refresh());
@@ -31,13 +32,14 @@ final class AccountPanel {
             final CoordinatorClient client;
             try{client=new CoordinatorClient(origin.getText().toString().trim());}catch(IllegalArgumentException e){status.setText("Enter a valid HTTPS coordinator address.");return;}
             final String display=name.getText().toString(),key=join.getText().toString();
+            final boolean visible=publicCredit.isChecked();
             new AlertDialog.Builder(activity).setTitle("Register this device?").setMessage("Send the display name, device capabilities and resource settings to "+client.origin()+"? Computation remains stopped.")
                 .setNegativeButton("Cancel",null).setPositiveButton("Register",(dialog,which)->{
                     register.setEnabled(false);status.setText("Registering. Please wait; do not repeat the request.");
                     Map<String,Object> limits=object("cpu_percent",settings.getInt("cpu_percent",25),"gpu_percent",settings.getInt("gpu_percent",0),"allow_cpu",settings.getInt("cpu_percent",25)>0,"allow_gpu",settings.getInt("gpu_percent",0)>0);
                     new Thread(()->{
                         String message;
-                        try{Enrollment.register(client,store,display,key,limits,()->false);settings.edit().putString("server",client.origin()).apply();message="Device registered. Credentials saved securely. Computation has not started.";}
+                        try{Enrollment.register(client,store,display,key,limits,visible,()->false);settings.edit().putString("server",client.origin()).apply();message="Device registered. Credentials saved securely. Computation has not started.";}
                         catch(Exception e){message="Registration did not finish. Refresh account status before trying again.";}
                         final String result=message;activity.runOnUiThread(()->{if(!activity.isDestroyed()){join.setText("");status.setText(result);refresh();}});
                     },"account-registration").start();
@@ -58,7 +60,8 @@ final class AccountPanel {
                         try{
                             Map<String,Object> profile=new CoordinatorClient((String)account.get("server")).request("/api/me",object("dashboard_token",account.get("dashboard_token")),null);
                             Object display=profile.get("display_name");
-                            message="Contributor: "+(display instanceof String&&!((String)display).trim().isEmpty()?display:"Unnamed contributor")+"\n"+message+"\nPersonal statistics are available from Dashboard.";
+                            String visibility=Boolean.TRUE.equals(profile.get("public_credit"))?"Public leaderboard: visible after verified work.":"Public leaderboard: hidden (private profile).";
+                            message="Contributor: "+(display instanceof String&&!((String)display).trim().isEmpty()?display:"Unnamed contributor")+"\n"+message+"\n"+visibility+"\nPersonal statistics are available from Dashboard.";
                         }catch(Exception unavailable){message="Contributor name unavailable while the coordinator cannot be reached.\n"+message+" Saved credentials and credits are retained.";}
                     }else message+=" This device is linked to an existing profile; its dashboard token is not stored here.";
                 }

@@ -71,7 +71,7 @@ public final class BoundedCrib {
         List<Object> candidates=new ArrayList<>();int unknown=0,nodes=0,visited=0;
         check(cancel);
         if(!conflict&&provider!=null){synchronized(provider){provider.prepare(new ArrayList<>(cores.values()),offset,crib.length());}}
-        ExecutorService pool=!conflict&&workers>1?Executors.newFixedThreadPool(Math.min(workers,cores.size())):null;
+        ExecutorService pool=!conflict&&workers>1&&cores.size()>1?Executors.newFixedThreadPool(Math.min(workers,cores.size())):null;
         List<Future<BoardSolver.Result>> prepared=new ArrayList<>();
         try {
         if(pool!=null)for(Key k:cores.values())prepared.add(pool.submit(()->solveCore(k,offset,crib.length(),edges,pairs,nodeLimit,boardLimit,cancel,provider)));

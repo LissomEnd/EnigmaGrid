@@ -12,7 +12,7 @@ final class CoordinatorClient {
     static final class HttpFailure extends IOException {final int status;HttpFailure(int status){super("Coordinator HTTP "+status);this.status=status;}}
     private final String origin;
     private final javax.net.ssl.SSLSocketFactory tls;
-    private volatile HttpsURLConnection active;
+    private final java.util.concurrent.atomic.AtomicReference<HttpsURLConnection> active=new java.util.concurrent.atomic.AtomicReference<>();
     CoordinatorClient(String origin) {this(origin,null);}
     CoordinatorClient(String origin,javax.net.ssl.SSLSocketFactory tls) {
         this.tls=tls;
@@ -24,11 +24,18 @@ final class CoordinatorClient {
     }
     String origin(){return origin;}
     CoordinatorClient fork(){return new CoordinatorClient(origin,tls); }
-    void cancel(){HttpsURLConnection connection=active;if(connection!=null)connection.disconnect();}
+    void cancel(){
+        HttpsURLConnection connection=active.getAndSet(null);
+        if(connection==null)return;
+        // Android disconnect can wait for an in-flight socket operation. Never block
+        // the service/UI thread handling Stop while that operation finishes.
+        Thread closer=new Thread(()->connection.disconnect(),"coordinator-disconnect");
+        closer.setDaemon(true);closer.start();
+    }
     synchronized Map<String,Object> request(String path,Map<String,Object> payload,String token) throws Exception {
         if(!path.matches("/(health|api/[a-z/-]+)"))throw new IllegalArgumentException("Invalid endpoint");
         if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
-        HttpsURLConnection c=(HttpsURLConnection)new URL(origin+path).openConnection();active=c;
+        HttpsURLConnection c=(HttpsURLConnection)new URL(origin+path).openConnection();active.set(c);
         try {
             if(tls!=null)c.setSSLSocketFactory(tls);
             c.setInstanceFollowRedirects(false);c.setConnectTimeout(15000);c.setReadTimeout(30000);
@@ -47,6 +54,6 @@ final class CoordinatorClient {
                 while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();size+=n;if(size>4*1024*1024)throw new IOException("Response exceeds size limit");output.write(buffer,0,n);}
                 return JsonCodec.object(new String(output.toByteArray(),StandardCharsets.UTF_8));
             }
-        }finally{active=null;c.disconnect();}
+        }finally{active.compareAndSet(c,null);c.disconnect();}
     }
 }

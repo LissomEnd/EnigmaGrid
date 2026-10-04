@@ -33,7 +33,9 @@ public final class ComputeService extends Service {
 
         if(wakeLock!=null)wakeLock.acquire(120000);
         String gate=control.status();
-        String state=outcome!=null&&(gate.equals("computing")||gate.equals("CPU duty rest")||gate.equals("ready"))?outcome:gate;
+        boolean unrestricted=gate.equals("computing")||gate.equals("CPU duty rest")||gate.equals("ready");
+        NetworkWorker current=network;
+        String state=unrestricted?(outcome!=null?outcome:(current!=null?current.phase():gate)):gate;
 
         getSharedPreferences("worker-status",0).edit().putString("state",state).apply();
 

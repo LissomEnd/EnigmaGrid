@@ -12,6 +12,9 @@ import static org.enigmagrid.core.Canonical.object;
 final class Enrollment {
     static Map<String,Object> metadata(){return object("worker_version","0.4.8","platform","Android "+Build.VERSION.RELEASE,"machine",Build.SUPPORTED_ABIS[0],"cpu_count",Runtime.getRuntime().availableProcessors(),"gpus",Collections.emptyList(),"capabilities",Arrays.asList("cpu","bounded_crib_v1"),"supported_engines",Arrays.asList("bounded_crib_v1"));}
     static synchronized Map<String,Object> register(CoordinatorClient client,CredentialStore store,String name,String joinKey,Map<String,Object> settings,BooleanSupplier cancel) throws Exception {
+        return register(client,store,name,joinKey,settings,false,cancel);
+    }
+    static synchronized Map<String,Object> register(CoordinatorClient client,CredentialStore store,String name,String joinKey,Map<String,Object> settings,boolean publicCredit,BooleanSupplier cancel) throws Exception {
         if(store.load()!=null)throw new IllegalStateException("An account is already saved");
         CredentialStore attempt=store.registrationAttempt();
         if(attempt.load()!=null)throw new IllegalStateException("An earlier registration has an unknown outcome; do not register again");
@@ -27,7 +30,7 @@ final class Enrollment {
             if(new BigInteger(Canonical.sha256(nonce+":"+counter),16).shiftRight(256-bits).signum()==0)break;
             counter++;
         }
-        Map<String,Object> payload=object("display_name",name.trim().isEmpty()?"Anonymous volunteer":name.trim(),"device_label","Android device","public_credit",false,"meta",metadata(),"settings",settings,"pow_nonce",nonce,"pow_counter",counter);
+        Map<String,Object> payload=object("display_name",name.trim().isEmpty()?"Anonymous volunteer":name.trim(),"device_label","Android device","public_credit",publicCredit,"meta",metadata(),"settings",settings,"pow_nonce",nonce,"pow_counter",counter);
         if(joinKey!=null&&!joinKey.trim().isEmpty())payload.put("contributor_key",joinKey.trim());
         // A timeout here is ambiguous: caller must not automatically register again.
         attempt.save(object("server",client.origin(),"started_at",System.currentTimeMillis()));

@@ -1,4 +1,4 @@
-# EnigmaGrid for Android 0.4.5
+# EnigmaGrid for Android
 
 Experimental volunteer client, Android 8+ (API 26). Install the signed APK from
 GitHub Releases, register under Account, then choose Start contributing.
@@ -75,8 +75,8 @@ second ceiling for tiny jobs. Empty assignments and transient network failures
 retain a 30-second backoff. Search preparation uses available CPU processors
 (up to 32) and reduces results in canonical core order, preserving receipt bytes
 and candidate caps. CPU duty, pause, cancellation and resource guards apply to
-all workers. Vulkan calls remain serialized; GPU batching remains
-an optimization opportunity; 0.4.7 adds context reuse. A 100% setting permits activity but does not promise
+all workers. Vulkan calls remain serialized; 0.4.7 adds context reuse and
+0.4.8 batches up to 16 core row tables per dispatch. A 100% setting permits activity but does not promise
 full hardware utilization for every job.
 
 Parallel qualification compares complete receipts with Python and sequential
@@ -138,3 +138,28 @@ launch. A cached APK is rechecked against release size/SHA-256, package/version
 and installed signer before reuse. The periodic checker completed a real check
 on RedMagic with state CURRENT; optional/required policy branches additionally
 have controlled tests. These updater changes are included starting with Android 0.4.8.
+
+## Unreleased client changes
+
+Registration now offers an explicit public-leaderboard choice, off by default.
+Joining an existing contributor keeps that profile's visibility setting. Account
+status distinguishes public and private profiles; verified work is required for
+ranking. This does not yet provide an in-app toggle for an existing profile.
+
+The bounded receipt outbox supports up to eight results, preserves legacy saved
+receipts, and removes only the acknowledged result. Experimental multi-lease
+support is disabled in normal client construction. It falls back to the single
+lease route only when the batch endpoint returns HTTP 404. It validates the
+whole batch before computation and rejects duplicate lease IDs.
+
+Isolated RedMagic testing exercised eight-job batches, Vulkan, encrypted storage,
+process restart and lost acknowledgment recovery. Sixteen replica receipts were
+verified independently without duplicate credit. A host HTTPS comparison used
+26 requests for batching versus 39 for single assignments on the same synthetic
+workload, including a lost acknowledgment. This is not a device throughput or
+CPU/GPU utilization measurement. Batch completion still sends receipts separately.
+
+Single-core jobs no longer create a redundant executor. Cancellation disconnects
+network sockets off the calling thread, and status distinguishes computation from
+network waits. The reported production UI stall has not yet been reproduced or
+confirmed resolved; these changes are not proof of its root cause.
