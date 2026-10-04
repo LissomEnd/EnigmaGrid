@@ -14,6 +14,24 @@ public class AdaptiveRowsChecks {
   if(!Arrays.deepEquals(expected,broken.rows(key,3,16)))throw new AssertionError("fallback");broken.rows(key,3,16);if(failures[0]!=1||!broken.failed())throw new AssertionError("failure latch");
   if(broken.available()||broken.dispatches()!=0)throw new AssertionError("failed telemetry");
   AdaptiveRows invalid=new AdaptiveRows((k,o,n)->new int[n][26],()->100,()->false,clock);if(!Arrays.deepEquals(expected,invalid.rows(key,3,16))||!invalid.failed())throw new AssertionError("malformed fallback");
+  // Vendor/IPC failures must never become accepted row data or repeated GPU retries.
+  for(int corruption=0;corruption<6;corruption++){
+   final int scenario=corruption;int[] attempts={0};
+   AdaptiveRows corrupt=new AdaptiveRows((k,o,n)->{
+    attempts[0]++;int[][] value=BoundedCrib.cpuRows(k,o,n);
+    switch(scenario){
+     case 0:return null;
+     case 1:return Arrays.copyOf(value,n-1);
+     case 2:value[0]=null;break;
+     case 3:value[0]=new int[25];break;
+     case 4:value[0][0]=26;break;
+     case 5:value[0][0]=-1;break;
+    }
+    return value;
+   },()->100,()->false,clock);
+   for(int retry=0;retry<2;retry++)if(!Arrays.deepEquals(expected,corrupt.rows(key,3,16)))throw new AssertionError("corrupt driver CPU parity "+scenario);
+   if(attempts[0]!=1||!corrupt.failed()||corrupt.available()||corrupt.dispatches()!=0)throw new AssertionError("corrupt driver latch/telemetry "+scenario);
+  }
   AdaptiveRows stopped=new AdaptiveRows((k,o,n)->{throw new AssertionError("dispatch after stop");},()->100,()->true,clock);
   try{stopped.rows(key,3,16);throw new AssertionError("stop ignored");}catch(CancellationException good){}
   int[] preparations={0};
