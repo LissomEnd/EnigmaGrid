@@ -378,3 +378,24 @@ prove execution on a physical non-coherent GPU driver.
 This change is not in the installed 0.4.14 APK. Its GPU qualification generation
 changes, so a future build requires a fresh on-device GPU check; CPU contribution
 remains available while acceleration is unqualified.
+
+
+## CPU platform and encrypted storage qualification
+
+The manual `android-cpu-compatibility.yml` workflow builds an isolated,
+unenrolled lab APK and runs reference CPU receipts and Android Keystore storage
+checks on API 26 and API 35 x86_64 emulators. The emulator uses software graphics;
+these results do not qualify a physical GPU or an ARM processor.
+
+Run [37235873433](https://github.com/LissomEnd/EnigmaGrid/actions/runs/37235873433)
+at commit `f923302` passed on both API levels: 60 reference receipts, credential
+replacement, and a 256 KiB durable encrypted result round trip and cleanup.
+The previous API 26 run failed on large-result decryption with an
+`AEADBadTagException`; processing cipher input in 16 KiB updates fixed the
+reproduced test while retaining AES-GCM, the existing file format and key aliases.
+Decrypted bytes are returned only after final authentication succeeds.
+This storage change is not included in the installed 0.4.14 release.
+
+The lab also requires rejection of a large ciphertext with a modified tag. It
+uses only qualification files and clears them afterward. A successful CPU test
+is not evidence of GPU acceleration, sustained throughput, or all-device support.
