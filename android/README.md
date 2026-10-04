@@ -175,3 +175,10 @@ does not enable server batching or change campaign priorities or compute limits.
 One renewal scheduler covers the complete batch, including slow receipt uploads.
 A delayed-acknowledgment regression checks that heartbeat renewal continues while
 the completion response is pending; the scheduler is closed on success or failure.
+
+## Update policy compatibility in development
+
+The update checker accepts an Android-specific minimum version from the coordinator,
+falling back to the shared minimum on older servers. This allows Android and Windows
+release requirements to evolve independently. No production minimum is raised by
+this client change; installation still requires Android confirmation.

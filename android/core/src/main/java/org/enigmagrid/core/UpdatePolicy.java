@@ -4,6 +4,14 @@ package org.enigmagrid.core;
 public final class UpdatePolicy {
     private UpdatePolicy() {}
     public enum State { CURRENT, OPTIONAL, REQUIRED, REQUIRED_UNAVAILABLE }
+    public static String androidMinimum(java.util.Map<String,Object> config) {
+        String key=config.containsKey("min_android_worker_version")?"min_android_worker_version":"min_worker_version";
+        Object value=config.get(key);
+        if(!(value instanceof String))throw new IllegalArgumentException("Missing or invalid Android minimum version");
+        String minimum=(String)value;
+        if(!minimum.isEmpty())parse(minimum);
+        return minimum;
+    }
     public static int compare(String a,String b) {
         int[] left=parse(a),right=parse(b);
         for(int i=0;i<3;i++){int result=Integer.compare(left[i],right[i]);if(result!=0)return result;}

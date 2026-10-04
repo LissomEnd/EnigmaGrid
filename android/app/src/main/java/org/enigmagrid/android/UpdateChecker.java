@@ -17,9 +17,7 @@ final class UpdateChecker {
  }
  static Result check(String origin,String installed)throws Exception {
   Map<String,Object> config=new CoordinatorClient(origin).request("/api/public/config",null,null);
-  Object rawMinimum=config.get("min_worker_version");
-  if(!(rawMinimum instanceof String))throw new IOException("Missing coordinator minimum version");
-  String minimum=(String)rawMinimum;
+  String minimum=UpdatePolicy.androidMinimum(config);
   UpdatePolicy.evaluate(installed,minimum,null);
   JSONArray releases;
   try{releases=new JSONArray(read(REPOSITORY));}catch(Exception unavailable){
