@@ -50,9 +50,17 @@ def opencl_devices():
         import pyopencl as cl
         found = []
         for platform in cl.get_platforms():
-            for device in platform.get_devices(device_type=cl.device_type.GPU):
-                if device.available and device.compiler_available and device.global_mem_size >= 64*1024*1024:
-                    found.append(device)
+            # A broken optional ICD must not hide healthy GPUs on other platforms.
+            try:
+                devices = platform.get_devices(device_type=cl.device_type.GPU)
+            except Exception:
+                continue
+            for device in devices:
+                try:
+                    if device.available and device.compiler_available and device.global_mem_size >= 64*1024*1024:
+                        found.append(device)
+                except Exception:
+                    continue
         return found
     except Exception:
         return []
