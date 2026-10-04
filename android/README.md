@@ -73,8 +73,8 @@ second ceiling for tiny jobs. Empty assignments and transient network failures
 retain a 30-second backoff. Search preparation uses available CPU processors
 (up to 32) and reduces results in canonical core order, preserving receipt bytes
 and candidate caps. CPU duty, pause, cancellation and resource guards apply to
-all workers. Vulkan calls remain serialized; GPU batching/context reuse remains
-an optimization opportunity. A 100% setting permits activity but does not promise
+all workers. Vulkan calls remain serialized; GPU batching remains
+an optimization opportunity; 0.4.7 adds context reuse. A 100% setting permits activity but does not promise
 full hardware utilization for every job.
 
 Parallel qualification compares complete receipts with Python and sequential
@@ -86,3 +86,24 @@ objects across serialized dispatches. Errors invalidate the cache. GPU
 qualification must be repeated after this backend change; CPU remains available.
 RedMagic validation passed 4,992 contact comparisons, 60 full receipts and
 network replay across process restart with independent Python verification.
+
+## Verified update path and compatibility limits
+
+On RedMagic NX789J / Android 15, the production 0.4.6 app discovered 0.4.7,
+downloaded and verified its APK, and opened the Android package installer.
+The owner confirmed installation. Version 0.4.7 retained account identity and
+CPU/GPU preferences; GPU requalification passed and contribution resumed.
+This validates that upgrade path on this device, not unattended installation.
+
+| Target | Build coverage | Physical-device evidence |
+| --- | --- | --- |
+| ARM64 / Adreno 830 / Android 15 | Release compiled | CPU/GPU parity, network replay, upgrade and production receipts |
+| ARMv7 | Native library compiled | Not yet tested on hardware |
+| x86_64 | Native library compiled | Not yet tested on hardware |
+| Other Vulkan GPUs (including Mali) | Optional backend with CPU fallback | Not yet tested on hardware |
+
+Android 8/API 26 is the configured minimum, not a claim of hardware testing on
+every supported API level. Mandatory-update policy and invalid-APK rejection
+have controlled tests; a production mandatory-version change was not performed
+for testing. Background periodic release checks and advanced volunteer account
+management are still pending.
