@@ -1,6 +1,7 @@
 package org.enigmagrid.android;
 
 import android.content.*;
+import android.app.ActivityManager;
 import android.os.*;
 import java.util.function.Supplier;
 
@@ -8,13 +9,19 @@ import java.util.function.Supplier;
 final class ResourceGuard implements Supplier<String> {
     private final Context context;
     private final PowerManager power;
+    private final ActivityManager memoryManager;
+    private final ActivityManager.MemoryInfo memoryInfo=new ActivityManager.MemoryInfo();
     private volatile boolean chargingOnly=true;
     private long last=-1;
     private String cached="Checking battery";
-    ResourceGuard(Context context){this.context=context.getApplicationContext();power=(PowerManager)context.getSystemService(Context.POWER_SERVICE);}
+    ResourceGuard(Context context){this.context=context.getApplicationContext();power=(PowerManager)context.getSystemService(Context.POWER_SERVICE);memoryManager=(ActivityManager)this.context.getSystemService(Context.ACTIVITY_SERVICE);}
     synchronized void setChargingOnly(boolean value){if(chargingOnly!=value){chargingOnly=value;last=-1;}}
     @Override public synchronized String get() {
         long now=SystemClock.elapsedRealtime();if(last>=0&&now-last<1000)return cached;last=now;
+        if(memoryManager!=null){
+            memoryManager.getMemoryInfo(memoryInfo);
+            if(memoryInfo.lowMemory)return cached="Waiting for available memory";
+        }
         Intent battery=context.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         if(battery==null)return cached="Battery information unavailable";
         int level=battery.getIntExtra(BatteryManager.EXTRA_LEVEL,-1),scale=battery.getIntExtra(BatteryManager.EXTRA_SCALE,-1),temperature=battery.getIntExtra(BatteryManager.EXTRA_TEMPERATURE,-1);

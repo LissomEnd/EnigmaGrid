@@ -32,6 +32,16 @@ Account registration and statistics are available in-app; advanced account
 management does not yet have full parity with the volunteer web interface.
 No admin functionality is included.
 
+### Prepared memory-pressure guard (not in published 0.4.12)
+
+The next consolidated build checks Android's `ActivityManager.MemoryInfo.lowMemory`
+alongside battery and thermal restrictions, with the same one-second cache.
+The cooperative gate suspends computation and resumes when the system clears the
+signal; Stop remains available while waiting. It preserves the current search
+stack, so this is not a promise to release all allocated memory or prevent Android
+from reclaiming the process. Controlled host tests cover the gate's recovery and
+Stop behavior; forced system-wide memory exhaustion has not been tested on a phone.
+
 ## Build
 
 Use JDK 17, Gradle 8.9, Android SDK 35, NDK 27.2.12479018 and CMake 3.22.1.

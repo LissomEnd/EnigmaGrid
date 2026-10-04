@@ -14,7 +14,16 @@ public class ControlChecks {
         control.stop();if(!control.getAsBoolean())throw new AssertionError("stop");
         Clock blockedClock=new Clock();WorkControl blocked=new WorkControl(blockedClock,()->"Cooling down");blockedClock.onSleep=blocked::stop;
         if(!blocked.getAsBoolean()||blockedClock.slept!=100)throw new AssertionError("stop during resource wait");
+        Clock memoryClock=new Clock();boolean[] lowMemory={true};int[] waits={0};
+        WorkControl memoryControl=new WorkControl(memoryClock,()->lowMemory[0]?"Waiting for available memory":null);
+        memoryClock.onSleep=()->{
+            if(!"Waiting for available memory".equals(memoryControl.status()))throw new AssertionError("memory wait status");
+            if(++waits[0]==3)lowMemory[0]=false;
+        };
+        if(memoryControl.getAsBoolean()||memoryClock.slept!=300||!"computing".equals(memoryControl.status()))throw new AssertionError("memory recovery");
+        lowMemory[0]=true;memoryClock.onSleep=memoryControl::stop;
+        if(!memoryControl.getAsBoolean()||memoryClock.slept!=400)throw new AssertionError("stop during memory pressure");
         try{control.setPercent(0);throw new AssertionError("Invalid duty accepted");}catch(IllegalArgumentException expected){}
-        System.out.println("PASS: duty cycle, pause/resume, stop, restricted wait, invalid duty");
+        System.out.println("PASS: duty cycle, pause/resume, stop, restricted wait, memory recovery and stop, invalid duty");
     }
 }
