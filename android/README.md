@@ -139,7 +139,7 @@ and installed signer before reuse. The periodic checker completed a real check
 on RedMagic with state CURRENT; optional/required policy branches additionally
 have controlled tests. These updater changes are included starting with Android 0.4.8.
 
-## Unreleased client changes
+## Client changes in 0.4.9
 
 Registration now offers an explicit public-leaderboard choice, off by default.
 Joining an existing contributor keeps that profile's visibility setting. Account
