@@ -5,6 +5,21 @@ on:
 permissions:
   contents: read
 jobs:
+  native-memory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libvulkan-dev
+      - name: Native memory synchronization and failure cleanup
+        run: |
+          c++ -std=c++17 -Wall -Wextra -fsanitize=address,undefined -fno-omit-frame-pointer android/native-tests/host_memory_checks.cpp -o /tmp/enigmagrid-host-memory-checks
+          /tmp/enigmagrid-host-memory-checks
   test:
     runs-on: windows-latest
     steps:
