@@ -237,12 +237,25 @@ def register(args,state_path):
     if r.get("dashboard_token"):state["dashboard_token"]=r["dashboard_token"]
     save_state(state_path,state);return state
 
+def apply_coordinator_state(reply,runtime):
+    if reply.get("settings") is not None:runtime["settings"]=normalize_settings(reply["settings"])
+    runtime["enabled"]=bool(reply.get("enabled",True));runtime["trust_score"]=reply.get("trust_score")
+    runtime["quarantined"]=bool(reply.get("quarantined",False))
+    return reply
+
 def heartbeat_once(state,runtime):
-    r=post(state["server"],"/api/heartbeat",{"meta":meta(runtime)},state["device_token"])
-    if r.get("settings") is not None:runtime["settings"]=normalize_settings(r["settings"])
-    runtime["enabled"]=bool(r.get("enabled",True));runtime["trust_score"]=r.get("trust_score")
-    runtime["quarantined"]=bool(r.get("quarantined",False))
-    return r
+    return apply_coordinator_state(post(state["server"],"/api/heartbeat",{"meta":meta(runtime)},state["device_token"]),runtime)
+
+def request_work(state,runtime):
+    reply=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
+    # New coordinators return the same control snapshot with the lease.
+    # Older servers still need a heartbeat before executing any returned work.
+    if all(key in reply for key in ("settings","enabled","quarantined")):
+        control=apply_coordinator_state(reply,runtime)
+    else:
+        control=heartbeat_once(state,runtime)
+    return reply,control
+
 def heartbeat_loop(stop,state,runtime):
     while not stop.wait(20):
         publish_health(runtime)
@@ -381,13 +394,61 @@ def run_portable(lease,runtime=None,state_path=None):
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 
+def run_constrained_parallel(lease,runtime,state_path):
+    from search.crib_work import run
+    from search.process_map import OrderedProcessMap
+    import math
+    settings=runtime.get('settings',{})
+    percent=max(0,min(100,int(settings.get('cpu_percent',0))))
+    if not settings.get('allow_cpu',True) or not percent:
+        raise InterruptedError('CPU disabled during constrained work')
+    count=min(32,max(1,math.ceil((os.cpu_count() or 1)*percent/100)))
+    pool=runtime.get('_constrained_pool')
+    if pool is not None and pool.workers!=count:
+        pool.close();pool=None
+    if pool is None:
+        pool=OrderedProcessMap(count,chunk_size=8)
+        runtime['_constrained_pool']=pool
+    next_health=[0.0]
+    def control():
+        current=runtime.get('settings',{})
+        pct=max(0,min(100,int(current.get('cpu_percent',0))))
+        if not current.get('allow_cpu',True) or not pct:
+            pool.set_percent(0);raise InterruptedError('CPU disabled')
+        ctl=read_control(state_path) if state_path else {}
+        while ctl.get('paused') and not ctl.get('stop_requested'):
+            pool.set_percent(0);publish_health(runtime,'paused')
+            time.sleep(.1);ctl=read_control(state_path)
+        if ctl.get('stop_requested'):
+            pool.set_percent(0);raise InterruptedError('Constrained work stopped')
+        # Preferences may change while the parent is waiting in pause.
+        current=runtime.get('settings',{})
+        pct=max(0,min(100,int(current.get('cpu_percent',0))))
+        if not current.get('allow_cpu',True) or not pct:
+            pool.set_percent(0);raise InterruptedError('CPU disabled during pause')
+        # Fractional duty across processes, without multiplying two CPU limits.
+        pool.set_percent(min(100,max(1,int((os.cpu_count() or 1)*pct/count))))
+    def progress(done,total):
+        control();runtime['progress']=done/max(1,total)
+        now=time.monotonic()
+        if done>=total or now>=next_health[0]:
+            publish_health(runtime,'computing');next_health[0]=now+.5
+    pool.check=control
+    runtime['resource']='CPU';runtime['cpu_threads']=count
+    control()
+    result=run(lease,checkpoint=progress,solve_map=pool)
+    return result,len(result['receipt']['candidates'])
+
 def run_constrained(lease,runtime=None,state_path=None):
     from search.crib_work import run
     runtime=runtime if runtime is not None else {}
+    if runtime.get('_parallel_constrained'):
+        return run_constrained_parallel(lease,runtime,state_path)
     runtime['resource']='CPU'
     last=time.monotonic()
+    next_health=last
     def checkpoint(done,total):
-        nonlocal last
+        nonlocal last,next_health
         settings=runtime.get('settings',{'allow_cpu':True,'cpu_percent':50})
         if not settings.get('allow_cpu',True) or settings.get('cpu_percent',0)<=0:
             raise InterruptedError('CPU disabled during constrained work')
@@ -408,7 +469,8 @@ def run_constrained(lease,runtime=None,state_path=None):
             time.sleep(min(.1,max(0,until-time.monotonic())))
         last=time.monotonic()
         runtime['progress']=done/max(1,total)
-        if state_path:publish_health(runtime,'computing')
+        if state_path and (done>=total or last>=next_health):
+            publish_health(runtime,'computing');next_health=last+0.5
     result=run(lease,checkpoint=checkpoint)
     return result,len(result['receipt']['candidates'])
 
@@ -434,9 +496,18 @@ def set_preferences(state,cpu,gpu):
     state["settings"]=r.get("settings",st);return r
 
 def work(args,state):
+    runtime={"settings":normalize_settings(state.get("settings",{})),"enabled":True,
+             "_parallel_constrained":True}
+    try:
+        return _work(args,state,runtime)
+    finally:
+        pool=runtime.pop('_constrained_pool',None)
+        if pool is not None:pool.close()
+
+
+def _work(args,state,runtime):
     if not acquire_worker_mutex():
         print("Worker already running for this Windows user.",flush=True);return 0
-    runtime={"settings":normalize_settings(state.get("settings",{})),"enabled":True}
     state_path=Path(args.state);health_path=state_path.with_name("worker-health.json")
     updater=UpdateManager(VERSION,state_path,state["server"]) if UpdateManager else None
     if updater:updater.start()
@@ -467,14 +538,18 @@ def work(args,state):
                 if updater.launch_apply(INSTALL_ROOT):
                     print("Applying verified update at safe point.",flush=True)
                     return 0
-            hb=heartbeat_once(state,runtime)
+            got,hb=request_work(state,runtime)
             if hb.get("update_required") and updater:updater.force_check()
             if not runtime["enabled"]:
                 publish_health(runtime,"disabled")
                 c=read_control(state_path);c["stop_requested"]=True;write_control(state_path,c)
                 print("Worker disabled or quarantined by coordinator.");return 0
-            st=runtime["settings"];runtime["cpu_threads"]=apply_cpu_limit(st["cpu_percent"])
-            got=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
+            st=runtime["settings"]
+            # Constrained child processes enforce aggregate CPU duty themselves.
+            # Do not make them inherit a smaller rounded affinity mask, which
+            # could strand their persistent pool on a subset after slider changes.
+            constrained=(got.get("lease") or {}).get("engine")=="bounded_crib_v1"
+            runtime["cpu_threads"]=apply_cpu_limit(100 if constrained else st["cpu_percent"])
             if got.get("update_required") and updater:updater.force_check()
             lease=got.get("lease")
             if not lease:
@@ -560,4 +635,7 @@ def main():
         print(json.dumps(set_preferences(state,args.cpu_percent,args.gpu_percent)));save_state(state_path,state);return
     raise SystemExit(work(args,state))
 
-if __name__=="__main__":main()
+if __name__=="__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    main()

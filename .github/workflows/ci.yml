@@ -62,6 +62,12 @@ jobs:
         run: python tests/test_validator_bounds.py
       - name: Coordinator transport safety
         run: python tests/test_worker_transport.py
+      - name: Constrained process parity and lifecycle
+        run: python tests/test_crib_parallel.py
+      - name: Constrained client process controls
+        run: python tests/test_worker_constrained_parallel.py
+      - name: Combined lease control snapshot
+        run: python tests/test_worker_lease_snapshot.py
       - name: Safe uninstall paths
         run: python tests/test_cleanup_safety.py
       - name: Shared proxy rate limits
@@ -92,6 +98,10 @@ jobs:
           python android/core/qualify_resume.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_updates.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_accelerator.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_constrained_telemetry.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_network_cycle.py --jdk "$jdk"
           exit $LASTEXITCODE

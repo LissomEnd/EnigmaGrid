@@ -16,7 +16,12 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
     public AdaptiveRows(BoundedCrib.RowProvider accelerator,IntSupplier percent,BooleanSupplier cancel,WorkControl.Timing timing){
         this.accelerator=accelerator;this.percent=percent;this.cancel=cancel;this.timing=timing;
     }
-    public void prepare(java.util.List<BoundedCrib.Key> keys,int offset,int length){accelerator.prepare(keys,offset,length);}
+    public void prepare(java.util.List<BoundedCrib.Key> keys,int offset,int length){
+        check();if(failed)return;
+        try{accelerator.prepare(keys,offset,length);}
+        catch(CancellationException e){throw e;}
+        catch(RuntimeException|LinkageError e){failed=true;check();}
+    }
     public boolean failed(){return failed;}
     public long dispatches(){return dispatches;}
     public boolean available(){return !failed&&percent.getAsInt()>0;}
@@ -25,7 +30,8 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
         check();int duty=percent.getAsInt();
         if(duty<0||duty>100)throw new IllegalArgumentException("GPU duty must be 0..100");
         if(failed||duty==0)return BoundedCrib.cpuRows(key,offset,length);
-        while(timing.nanos()<nextDispatch){
+        boolean cached=accelerator instanceof BatchedRows&&((BatchedRows)accelerator).cached(key,offset,length);
+        while(!cached&&timing.nanos()<nextDispatch){
             check();if(percent.getAsInt()==0)return BoundedCrib.cpuRows(key,offset,length);
             try{timing.sleep(Math.max(1,Math.min(50,(nextDispatch-timing.nanos()+999999)/1000000)));}
             catch(InterruptedException e){Thread.currentThread().interrupt();throw new CancellationException();}
@@ -39,7 +45,7 @@ public final class AdaptiveRows implements BoundedCrib.RowProvider {
                 if(row==null||row.length!=26)throw new IllegalStateException("GPU contact count");
                 for(int x=0;x<26;x++)if(row[x]<0||row[x]>=26||row[x]==x||row[row[x]]!=x)throw new IllegalStateException("Invalid GPU permutation");
             }
-            long end=timing.nanos();nextDispatch=end+Math.max(0,end-start)*(100-duty)/duty;
+            long end=timing.nanos();if(!cached)nextDispatch=end+Math.max(0,end-start)*(100-duty)/duty;
             check();dispatches+=accelerator instanceof BatchedRows?((BatchedRows)accelerator).dispatches()-before:1;return rows;
         } catch(CancellationException e){throw e;}
           catch(RuntimeException|LinkageError e){failed=true;check();return BoundedCrib.cpuRows(key,offset,length);}

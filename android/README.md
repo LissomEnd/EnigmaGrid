@@ -191,3 +191,36 @@ OEM restrictions may reject the start; the app records a manual-resume message.
 Controlled adapter tests cover these decisions; physical reboot/update recovery
 is still awaiting device qualification. The released 0.4.10 does not include this
 receiver. Run `python android/core/qualify_resume.py --jdk PATH` from the repository.
+
+### Pending consolidated accelerator changes
+
+Cached GPU rows no longer wait for the next GPU dispatch duty interval. The
+interval still applies to actual dispatches. Backend preparation failures now
+latch CPU fallback, while cancellation still propagates. These changes are not
+yet installed on the phone or qualified across physical GPU drivers.
+
+Run `python android/core/qualify_accelerator.py --jdk <JDK-directory>` from the
+repository root for controlled fallback, batching, duty, and parallel receipt
+checks. No Android build or connected phone is required.
+
+The pending CPU row implementation steps once per position and evaluates all
+26 contacts, instead of running 26 complete decryptions. Host checks compare
+1,344 rotor/reflector configurations, randomized rings and intervals, and explicit
+double-step boundaries against the retained crypt primitive. This is a CPU
+optimization; it does not establish physical GPU compatibility or whole-job speed.
+
+### Coordinated release qualification still open
+
+The pending Windows constrained path uses reusable spawn processes with bounded
+ordered batches. Host tests cover receipt parity, pause/resume preference changes,
+CPU disable, pool resize/reuse, and cleanup on normal or exceptional exit. Child
+processes enforce CPU duty; the parent avoids restricting their inherited CPU
+affinity. This has not yet been deployed or measured on the participating Windows
+devices. A standalone frozen motor probe passed; the complete installer remains
+unqualified.
+
+Server lease responses can carry the control snapshot to avoid a redundant
+heartbeat on short Windows jobs, with a legacy fallback. Queue indexes have been
+measured on an isolated database copy. These changes do not establish that the
+production validation backlog is resolved. Android physical GPU compatibility
+beyond the tested device, full release testing and deployment remain open.

@@ -80,9 +80,16 @@ def completions(partial, pairs, limit):
     visit(list(partial))
     return result, truncated
 
+def solve_core_task(task):
+    """Picklable mechanical work; receipt reduction stays in the parent process."""
+    key,offset,length,edges,pairs,node_limit,board_limit=task
+    return solve_board(crib_rows(key,offset,length),edges,max_pairs=pairs,
+                       node_limit=node_limit,solution_limit=board_limit)
+
+
 def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
            pairs=10, node_limit=20000, board_limit=64, completion_limit=256,
-           candidate_limit=256, checkpoint=None):
+           candidate_limit=256, checkpoint=None, solve_map=None):
     if any(type(v) is not int or v < 1 for v in (node_limit,board_limit,completion_limit,candidate_limit)):
         raise ValueError('Positive integer budgets required')
     if type(pairs) is not int or not 0 <= pairs <= 13: raise ValueError('Invalid cable count')
@@ -101,34 +108,42 @@ def search(ciphertext, crib, offset, cores, *, model='clean', index=None,
     candidates=[]; unknown=0; nodes=0; visited=0
     conflict=any(a==b for _,a,b in edges)
     if not conflict:
-        for h in sorted(canonical):
-            if checkpoint is not None:checkpoint(visited,len(canonical))
-            k=canonical[h]; visited+=1
-            rows=crib_rows(k,offset,len(crib))
-            local_edges=[(i-offset,a,b) for i,a,b in edges]
-            solved=solve_board(rows,local_edges,max_pairs=pairs,node_limit=node_limit,solution_limit=board_limit)
-            nodes+=solved['nodes']
-            uncertain=solved['status']=='unknown_budget'
-            for partial in solved['partial_boards']:
-                boards, cut=completions(partial,pairs,completion_limit); uncertain |= cut
-                for board in boards:
-                    key=replace(k,plugboard=pair_strings(board))
-                    # Replay all observed characters, leaving unknown plaintext explicit.
-                    fullrows=stream(key,len(obs))
-                    plain=''.join('?' if c is None else chr(65+fullrows[i][c]) for i,c in enumerate(obs))
-                    if any(obs[offset+j] is not None and plain[offset+j]!=p for j,p in enumerate(crib)):
-                        raise AssertionError('Constraint/replay disagreement')
+        ordered=sorted(canonical)
+        local_edges=[(i-offset,a,b) for i,a,b in edges]
+        tasks=((canonical[h],offset,len(crib),local_edges,pairs,node_limit,board_limit) for h in ordered)
+        # Caller owns the bounded executor and its cancellation/lifetime policy.
+        # map must yield in input order, irrespective of completion order.
+        solved_cores=iter((solve_map or map)(solve_core_task,tasks))
+        try:
+            for h in ordered:
+                if checkpoint is not None:checkpoint(visited,len(canonical))
+                k=canonical[h]; visited+=1
+                solved=next(solved_cores)
+                nodes+=solved['nodes']
+                uncertain=solved['status']=='unknown_budget'
+                for partial in solved['partial_boards']:
+                    boards, cut=completions(partial,pairs,completion_limit); uncertain |= cut
+                    for board in boards:
+                        key=replace(k,plugboard=pair_strings(board))
+                        # Replay all observed characters, leaving unknown plaintext explicit.
+                        fullrows=stream(key,len(obs))
+                        plain=''.join('?' if c is None else chr(65+fullrows[i][c]) for i,c in enumerate(obs))
+                        if any(obs[offset+j] is not None and plain[offset+j]!=p for j,p in enumerate(crib)):
+                            raise AssertionError('Constraint/replay disagreement')
+                        if len(candidates)>=candidate_limit:
+                            uncertain=True; break
+                        candidates.append(dict(key=asdict(key), plaintext=plain,
+                            unknown_slots=[i for i,c in enumerate(obs) if c is None]))
                     if len(candidates)>=candidate_limit:
-                        uncertain=True; break
-                    candidates.append(dict(key=asdict(key), plaintext=plain,
-                        unknown_slots=[i for i,c in enumerate(obs) if c is None]))
+                        uncertain=True
+                        break
+                unknown+=int(uncertain)
                 if len(candidates)>=candidate_limit:
-                    uncertain=True
+                    # Unvisited cores must never turn into a negative certificate.
                     break
-            unknown+=int(uncertain)
-            if len(candidates)>=candidate_limit:
-                # Unvisited cores must never turn into a negative certificate.
-                break
+        finally:
+            close=getattr(solved_cores,'close',None)
+            if close is not None:close()
     complete=unknown==0 and (conflict or visited==len(canonical))
     if checkpoint is not None:checkpoint(visited,len(canonical))
     return dict(engine=VERSION,scope_hash=digest(scope),cipher_sha256=sha256(ciphertext.encode()).hexdigest(),

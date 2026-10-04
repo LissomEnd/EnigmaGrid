@@ -36,7 +36,8 @@ $worker=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--console",
   "--add-data","$root\worker\update_config.json;worker",
   "--add-data","$root\worker\update_public_key.json;worker",
   "--hidden-import","updater","--collect-all","pyopencl",
-  "--hidden-import","search.portable_search") + $commonMeta + @("$root\worker\worker.py")
+  "--hidden-import","search.portable_search","--hidden-import","search.process_map",
+  "--hidden-import","search.bounded_crib") + $commonMeta + @("$root\worker\worker.py")
 & $py @worker
 if($LASTEXITCODE -ne 0){throw "Worker build failed"}
 

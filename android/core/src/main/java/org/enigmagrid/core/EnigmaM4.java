@@ -50,6 +50,22 @@ public final class EnigmaM4 {
         }
         return result;
     }
+    /** Evaluate all contacts after stepping once per position, without 26 full decryptions. */
+    public static int[][] rows(String reflector,String greek,String[] moving,String positions,String rings,int offset,int length) {
+        int[] packed=rowInputs(reflector,greek,moving,positions,rings,offset,length);
+        int[][] result=new int[length][26];
+        for(int slot=0;slot<length;slot++) {
+            int base=625+slot*9;
+            for(int contact=0;contact<26;contact++) {
+                int x=contact;
+                for(int j=3;j>=0;j--){int shift=packed[base+5+j];x=mod(packed[1+packed[base+j]*26+mod(x+shift)]-shift);}
+                x=packed[1+packed[base+4]*26+x];
+                for(int j=0;j<4;j++){int shift=packed[base+5+j];x=mod(packed[313+packed[base+j]*26+mod(x+shift)]-shift);}
+                result[slot][contact]=x;
+            }
+        }
+        return result;
+    }
     private static int mod(int n) { return (n % 26 + 26) % 26; }
     private static int pass(int x, int[] wiring, int p, int r) {
         return mod(wiring[mod(x + p - r)] - p + r);

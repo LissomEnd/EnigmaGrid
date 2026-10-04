@@ -47,9 +47,9 @@ def validate_envelope(lease):
     return job
 
 
-def run(lease, checkpoint=None):
+def run(lease, checkpoint=None, solve_map=None):
     job = validate_envelope(lease)
-    receipt = execute(job, checkpoint=checkpoint)
+    receipt = execute(job, checkpoint=checkpoint, solve_map=solve_map)
     # Preserve unknown_budget verbatim: submission is not proof of elimination.
     body = {k: v for k, v in job.items() if k not in ('id','program','ordinal')}
     return {'summary': {'engine': CAPABILITY, 'units': 1,

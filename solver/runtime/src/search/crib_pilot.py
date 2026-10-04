@@ -65,7 +65,7 @@ def validate_job(job):
         body={k:v for k,v in job.items() if k not in ('id','program','ordinal')}
         if digest(body)!=job['id']:raise ValueError('Job identity mismatch')
 
-def execute(job,checkpoint=None):
+def execute(job,checkpoint=None,solve_map=None):
     validate_job(job)
     return search(job['ciphertext'],job['crib'],job['offset'],[core_at(i) for i in job['core_indices']],
-        model='clean',pairs=job['pairs'],checkpoint=checkpoint,**job['budgets'])
+        model='clean',pairs=job['pairs'],checkpoint=checkpoint,solve_map=solve_map,**job['budgets'])

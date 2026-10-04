@@ -20,10 +20,7 @@ public final class BoundedCrib {
         String crypt(String text,List<String> plugs){return EnigmaM4.crypt(text,reflector,greek,moving,positions,rings,plugs.toArray(new String[0]));}
     }
     public static int[][] cpuRows(Key key,int offset,int length) {
-        if(offset<0||length<1||offset+length>72)throw new IllegalArgumentException("Row scope");
-        int[][] rows=new int[length][26];
-        for(int x=0;x<26;x++){char[] chars=new char[offset+length];Arrays.fill(chars,(char)(65+x));String out=key.crypt(new String(chars),Collections.emptyList());for(int j=0;j<length;j++)rows[j][x]=out.charAt(offset+j)-65;}
-        return rows;
+        return EnigmaM4.rows(key.reflector,key.greek,key.moving,key.positions,key.rings,offset,length);
     }
     public static Key coreAt(long index) {
         if(index<0 || index>=DOMAIN)throw new IllegalArgumentException("Core index");

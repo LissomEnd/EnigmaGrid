@@ -16,6 +16,20 @@ public class AdaptiveRowsChecks {
   AdaptiveRows invalid=new AdaptiveRows((k,o,n)->new int[n][26],()->100,()->false,clock);if(!Arrays.deepEquals(expected,invalid.rows(key,3,16))||!invalid.failed())throw new AssertionError("malformed fallback");
   AdaptiveRows stopped=new AdaptiveRows((k,o,n)->{throw new AssertionError("dispatch after stop");},()->100,()->true,clock);
   try{stopped.rows(key,3,16);throw new AssertionError("stop ignored");}catch(CancellationException good){}
+  int[] preparations={0};
+  AdaptiveRows preparationFailure=new AdaptiveRows(new BoundedCrib.RowProvider(){
+   public void prepare(List<BoundedCrib.Key> keys,int o,int n){preparations[0]++;throw new UnsatisfiedLinkError("driver initialization");}
+   public int[][] rows(BoundedCrib.Key k,int o,int n){throw new AssertionError("failed backend reused");}
+  },()->100,()->false,clock);
+  preparationFailure.prepare(Collections.singletonList(key),3,16);
+  preparationFailure.prepare(Collections.singletonList(key),3,16);
+  if(preparations[0]!=1||!preparationFailure.failed()||!Arrays.deepEquals(expected,preparationFailure.rows(key,3,16)))throw new AssertionError("preparation fallback");
+  AdaptiveRows preparationCancelled=new AdaptiveRows(new BoundedCrib.RowProvider(){
+   public void prepare(List<BoundedCrib.Key> keys,int o,int n){throw new CancellationException();}
+   public int[][] rows(BoundedCrib.Key k,int o,int n){throw new AssertionError();}
+  },()->100,()->false,clock);
+  try{preparationCancelled.prepare(Collections.singletonList(key),3,16);throw new AssertionError("preparation cancellation swallowed");}catch(CancellationException good){}
+  if(preparationCancelled.failed())throw new AssertionError("cancellation disabled GPU");
   System.out.println("PASS: parity, GPU duty, disabled GPU, native failure fallback, failure latch, malformed output, cancellation");
  }
 }

@@ -17,6 +17,7 @@ public final class BatchedRows implements BoundedCrib.RowProvider {
   if(keys==null||keys.size()>128)throw new IllegalArgumentException("Search batch scope");
   this.keys=new ArrayList<>(keys);this.offset=offset;this.length=length;cache.clear();
  }
+ public boolean cached(BoundedCrib.Key key,int offset,int length){return this.offset==offset&&this.length==length&&cache.containsKey(key);}
  private void check(){if(Thread.currentThread().isInterrupted()||cancel.getAsBoolean())throw new CancellationException();}
  public int[][] rows(BoundedCrib.Key key,int offset,int length){
   check();if(offset!=this.offset||length!=this.length||!keys.contains(key))return RowBatch.unpack(run(RowBatch.pack(Collections.singletonList(key),offset,length)),1,length)[0];
