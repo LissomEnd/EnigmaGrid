@@ -109,6 +109,8 @@ jobs:
           if (-not $jdk) { throw 'Java 17 is required for Android host checks' }
           python android/core/qualify_resume.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_resource_guard.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_updates.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_accelerator.py --jdk "$jdk"
