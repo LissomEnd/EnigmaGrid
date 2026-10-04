@@ -266,6 +266,6 @@ class UpdateManager:
                 "--asset",p["asset"],"--manifest",p["manifest"],"--signature",p["signature"]]
         flags=0
         if os.name=="nt":
-            flags=getattr(subprocess,"CREATE_NO_WINDOW",0)|getattr(subprocess,"DETACHED_PROCESS",0)
+            flags=getattr(subprocess,"CREATE_NO_WINDOW",0)
         subprocess.Popen(cmd,close_fds=True,creationflags=flags)
         return True

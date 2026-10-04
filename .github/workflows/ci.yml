@@ -66,6 +66,10 @@ jobs:
         run: python tests/test_crib_parallel.py
       - name: Constrained client process controls
         run: python tests/test_worker_constrained_parallel.py
+      - name: Memory-aware workers and hidden update helpers
+        run: python tests/test_worker_memory_and_hidden_updates.py
+      - name: Windows console-free spawn context
+        run: python tests/test_windows_hidden_spawn.py
       - name: Combined lease control snapshot
         run: python tests/test_worker_lease_snapshot.py
       - name: Windows bounded lease batches

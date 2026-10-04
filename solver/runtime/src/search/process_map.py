@@ -3,6 +3,7 @@ from collections import deque
 from concurrent.futures import ProcessPoolExecutor, TimeoutError, CancelledError
 from itertools import islice
 import multiprocessing
+import os
 import time
 
 
@@ -42,7 +43,11 @@ class OrderedProcessMap:
         if type(chunk_size) is not int or not 1 <= chunk_size <= 32:
             raise ValueError('Invalid chunk size')
         self.workers, self.chunk_size, self.check = workers, chunk_size, check
-        context = multiprocessing.get_context('spawn')
+        if os.name == 'nt':
+            from search.windows_spawn import HiddenSpawnContext
+            context = HiddenSpawnContext()
+        else:
+            context = multiprocessing.get_context('spawn')
         self.generation = context.Value('Q', 0)
         self.percent = context.Value('i', 100)
         self.active = False

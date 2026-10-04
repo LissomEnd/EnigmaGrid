@@ -15,24 +15,24 @@
 <p class="lead">A transparent volunteer-computing search for an unresolved Naval Enigma M4 message.</p></div>
 <div class="status"><span class="dot" id="liveDot"></span><span id="liveText">Connecting</span></div>
 </header>
-<section class="notice"><b>Reproduced results.</b> Work is credited after a separate computation matches: by another contributor, or by the server when spare capacity is available. The server earns no volunteer credit and never sends shell commands or arbitrary executable code.</section>
+<section class="notice"><b>Checked contributions.</b> New devices receive independent verification. Eligible devices with a verified track record may receive credit with random audits; those units are reported separately from independently reproduced work. The server earns no volunteer credit and never sends shell commands or arbitrary executable code.</section>
 <section class="card join">
 <div><span class="eyebrow">YOUR COMPUTER CAN HELP</span><h2>Join the search. Keep control.</h2>
-<p class="muted">Use spare CPU time, a compatible AMD, Intel or NVIDIA OpenCL GPU, or both. Choose your contribution budgets, pause when you need your computer, and see your verified work here.</p>
+<p class="muted">Use spare CPU time, a compatible AMD, Intel or NVIDIA OpenCL GPU, or both. Choose your contribution budgets, pause when you need your computer, and see your credited work here.</p>
 <p id="launchState" role="status">Checking whether public registration is open...</p>
 <p><a id="downloadLink" class="primary-link" href="https://github.com/LissomEnd/EnigmaGrid/releases/latest" hidden>Download for Windows</a> <a href="https://github.com/LissomEnd/EnigmaGrid">Read the source &amp; setup guide</a></p>
 <p class="small muted">Windows x64 · no Python or administrator rights needed · GPU optional. First start checks your hardware. The installer is not Authenticode-signed; read the release verification instructions.</p></div>
-<ol><li><strong>Install</strong><span>Get the installer from the official GitHub release.</span></li><li><strong>Choose</strong><span>Pick a nickname and CPU/GPU budgets. Public credit is optional.</span></li><li><strong>Contribute</strong><span>Work is checked independently before credit appears.</span></li></ol>
+<ol><li><strong>Install</strong><span>Get the installer from the official GitHub release.</span></li><li><strong>Choose</strong><span>Pick a nickname and CPU/GPU budgets. Public credit is optional.</span></li><li><strong>Contribute</strong><span>Work is checked under the verification policy before credit appears.</span></li></ol>
 </section>
 <section class="stats">
 <div class="metric"><span>Global progress</span><strong id="pct">--</strong></div>
-<div class="metric"><span>Verified units</span><strong id="done">--</strong></div>
+<div class="metric"><span>Completed units</span><strong id="done">--</strong></div>
 <div class="metric"><span>Online devices</span><strong id="online">--</strong></div>
 <div class="metric"><span>Awaiting validation</span><strong id="pending">--</strong></div>
 </section>
 <section class="card progress-card">
 <div class="section-head"><div><span class="eyebrow">SEARCH</span><h2>Global progress</h2></div><span class="workers"><b id="cpuOnline">0</b> CPU / <b id="gpuOnline">0</b> GPU online</span></div>
-<progress id="searchProgress" value="0" max="100" aria-label="Verified campaign work"></progress><p class="muted" id="progressText">Loading verified work...</p><p class="small muted">Progress measures this campaign's scheduled work, not the probability of solving the message.</p>
+<progress id="searchProgress" value="0" max="100" aria-label="Completed campaign work"></progress><p class="muted" id="progressText">Loading completed work...</p><p class="small muted">Progress measures this campaign's scheduled work, not the probability of solving the message.</p>
 </section>
 <section class="columns">
 <div class="card"><div class="section-head"><div><span class="eyebrow">COMMUNITY</span><h2>Top contributors</h2></div></div>
@@ -43,7 +43,7 @@
 <div id="me" class="personal empty" aria-live="polite">No private dashboard loaded.</div>
 <details id="accountActions" hidden><summary>Privacy and account</summary><p>Deleting your account removes your nickname, devices and personal contribution records. Anonymous completed search ranges remain. Uninstall the client afterwards to stop reconnection attempts.</p><label for="deleteConfirm">Type DELETE to permanently delete your account</label><input id="deleteConfirm" autocomplete="off"><button id="deleteBtn" class="danger">Delete my account</button><p id="accountMessage" role="status"></p></details></div>
 </section>
-<section class="card"><h2>Before you start</h2><details><summary>Can I pause or stop whenever I want?</summary><p class="muted">Yes. Open the Windows app and choose Pause or Stop safely. Closing its window keeps the app running in the system tray. Stop safely finishes the current job before exiting.</p></details><details><summary>Why is my work still awaiting validation?</summary><p class="muted">A separate computation must reproduce your result before credit appears. Pending work is expected when verification capacity is limited; you do not need to reinstall or register again.</p></details><details><summary>How much of my computer will this use?</summary><p class="muted">You choose the CPU and GPU budgets. Start low and increase only if you are comfortable with the heat, fan noise and electricity use. CPU budgets limit threads; GPU budgets control work and rest. They are not exact utilization percentages. GPU use is optional.</p></details></section>
+<section class="card"><h2>Before you start</h2><details><summary>Can I pause or stop whenever I want?</summary><p class="muted">Yes. Open the Windows app and choose Pause or Stop safely. Closing its window keeps the app running in the system tray. Stop safely finishes the current job before exiting.</p></details><details><summary>Why is my work still awaiting validation?</summary><p class="muted">New devices and selected audits require a matching independent computation. Eligible devices may receive credit with sampling, displayed separately from independently verified work. Pending work is expected when verification capacity is limited; you do not need to reinstall or register again.</p></details><details><summary>How much of my computer will this use?</summary><p class="muted">You choose the CPU and GPU budgets. Start low and increase only if you are comfortable with the heat, fan noise and electricity use. CPU budgets limit threads; GPU budgets control work and rest. They are not exact utilization percentages. GPU use is optional.</p></details></section>
 <section class="card"><span class="eyebrow">CAMPAIGNS</span><h2>Active search plan</h2><div id="campaigns" class="campaigns"></div></section>
 <section class="card"><h2>What are we trying to find?</h2><p class="muted">P1030680 is an unresolved Naval Enigma M4 message. This project tests defined key and operator-event hypotheses. A readable-looking candidate is not proof of a historical decryption, and success is not guaranteed. This is an independent community project.</p><p><a href="https://github.com/LissomEnd/EnigmaGrid/blob/main/PRIVACY.md">Privacy</a> · <a href="https://github.com/LissomEnd/EnigmaGrid/blob/main/SECURITY.md">Security &amp; reporting</a> · <a href="https://github.com/LissomEnd/EnigmaGrid/issues">Help &amp; bug reports</a></p></section>
 <footer><span>Open volunteer research project</span><span>No ads. No analytics. No remote shell.</span></footer>

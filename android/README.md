@@ -1,7 +1,9 @@
 # EnigmaGrid for Android
 
 Experimental volunteer client, Android 8+ (API 26). Install the signed APK from
-GitHub Releases, register under Account, then choose Start contributing.
+[GitHub Releases](https://github.com/LissomEnd/EnigmaGrid/releases/tag/android-v0.4.12),
+register under Account, then choose Start contributing. Version 0.4.12 is published
+as an experimental APK.
 
 Separate CPU/GPU duty sliders, charging-only option, battery and thermal guards,
 public and personal dashboards, encrypted credentials and durable pending
@@ -22,8 +24,9 @@ An ongoing foreground notification offers Pause, Resume and Stop. A bounded,
 renewed partial wake lock keeps requested work running with the screen off.
 Android may recreate the service after reclaiming its process; saved receipts
 are replayed before new work. Allow unrestricted battery use and vendor auto-start
-in Android app settings. Force-stop and reboot require opening the app and
-starting again. Android and vendor firmware can still stop applications.
+in Android app settings. Force-stop requires opening the app and starting again. Version 0.4.12 also
+attempts to restore requested work after boot; physical reboot recovery remains
+unverified. Android and vendor firmware can still stop applications.
 
 Account registration and statistics are available in-app; advanced account
 management does not yet have full parity with the volunteer web interface.
@@ -176,48 +179,50 @@ One renewal scheduler covers the complete batch, including slow receipt uploads.
 A delayed-acknowledgment regression checks that heartbeat renewal continues while
 the completion response is pending; the scheduler is closed on success or failure.
 
-## Update policy compatibility in development
+## Update policy compatibility (0.4.12)
 
 The update checker accepts an Android-specific minimum version from the coordinator,
 falling back to the shared minimum on older servers. This allows Android and Windows
 release requirements to evolve independently. No production minimum is raised by
 this client change; installation still requires Android confirmation.
 
-## Background resume in development
+## Background resume (0.4.12)
 
 A system receiver attempts to resume user-requested, unpaused computation after
 package replacement or completed boot. Stopped or paused sessions stay idle.
 OEM restrictions may reject the start; the app records a manual-resume message.
-Controlled adapter tests cover these decisions; physical reboot/update recovery
-is still awaiting device qualification. The released 0.4.10 does not include this
-receiver. Run `python android/core/qualify_resume.py --jdk PATH` from the repository.
+Controlled adapter tests cover these decisions. Package replacement on RedMagic
+resumed contribution with the existing account and resource preferences. Physical
+reboot recovery remains unverified. Version 0.4.10 does not include this receiver. Run `python android/core/qualify_resume.py --jdk PATH` from the repository.
 
-### Pending consolidated accelerator changes
+### Consolidated accelerator changes (0.4.12)
 
 Cached GPU rows no longer wait for the next GPU dispatch duty interval. The
 interval still applies to actual dispatches. Backend preparation failures now
-latch CPU fallback, while cancellation still propagates. These changes are not
-yet installed on the phone or qualified across physical GPU drivers.
+latch CPU fallback, while cancellation still propagates. These changes are installed on RedMagic; compatibility across other physical GPU
+drivers remains unverified.
 
 Run `python android/core/qualify_accelerator.py --jdk <JDK-directory>` from the
 repository root for controlled fallback, batching, duty, and parallel receipt
 checks. No Android build or connected phone is required.
 
-The pending CPU row implementation steps once per position and evaluates all
+The CPU row implementation steps once per position and evaluates all
 26 contacts, instead of running 26 complete decryptions. Host checks compare
 1,344 rotor/reflector configurations, randomized rings and intervals, and explicit
 double-step boundaries against the retained crypt primitive. This is a CPU
 optimization; it does not establish physical GPU compatibility or whole-job speed.
 
-### Coordinated release qualification still open
+### Qualification and remaining deployment limits
 
 The pending Windows constrained path uses reusable spawn processes with bounded
 ordered batches. Host tests cover receipt parity, pause/resume preference changes,
 CPU disable, pool resize/reuse, and cleanup on normal or exceptional exit. Child
 processes enforce CPU duty; the parent avoids restricting their inherited CPU
 affinity. This has not yet been deployed or measured on the participating Windows
-devices. A standalone frozen motor probe passed; the complete installer remains
-unqualified.
+devices. The locally packaged 0.4.4 worker passed standard and constrained self-tests.
+The Windows 0.4.4 build workflow and artifact attestation have passed. Final
+release tests remain in progress; it is not yet published, and installer/update
+qualification remains a separate gate.
 
 Server lease responses can carry the control snapshot to avoid a redundant
 heartbeat on short Windows jobs, with a legacy fallback. Queue indexes have been
@@ -225,7 +230,7 @@ measured on an isolated database copy. These changes do not establish that the
 production validation backlog is resolved. Android physical GPU compatibility
 beyond the tested device, full release testing and deployment remain open.
 
-The pending on-device GPU qualification exercises batch sizes 1, 2 and 16 at
+The on-device GPU qualification exercises batch sizes 1, 2 and 16 at
 window lengths 1, 2, 3, 16, 71 and 72, including windows ending at position 72.
 It compares GPU contacts against CPU results and checks full canonical receipts.
 The final CPU/GPU receipt comparisons now also honor thread interruption. Host
@@ -249,25 +254,28 @@ reported compute time. This source change is pending the coordinated deployment.
 
 Native release compilation has passed for `arm64-v8a`, `armeabi-v7a` and `x86_64`.
 Inspection of the generated Vulkan libraries confirms the corresponding ELF
-architectures and 16 KiB LOAD-segment alignment. Final APK ZIP alignment and
-execution on physical devices with different page sizes/drivers are separate
-release checks; compilation alone does not establish that compatibility.
+architectures and 16 KiB LOAD-segment alignment. The final 0.4.12 APK also passes ZIP alignment checks. Execution on physical
+devices with different page sizes/drivers remains a separate check; packaging
+alone does not establish that compatibility.
 
 Run `python android/core/qualify_apk_layout.py path/to/app.apk` to inspect every
 packaged native library's ABI and ELF alignment and the ZIP alignment of stored
 libraries. The local consolidated qualification APK passes this check, Android
 `zipalign -c -P 16 4`, and signature verification with the existing release
-certificate. This artifact has not been installed or published as a new release;
-physical runtime and coordinated deployment gates remain open.
+certificate. Version 0.4.12 is installed on RedMagic. One real production receipt from this
+version was independently reproduced successfully. This checks that calculation,
+not a historical decryption, sustained throughput or all-device reliability.
+The experimental Android 0.4.12 release is published. Coordinated Windows
+deployment remains a separate gate.
 
-The subsequent Android source change overlaps one receipt upload with the next
+Android 0.4.12 overlaps one receipt upload with the next
 computation in an assigned batch. Both results are saved before delivery; only
 the compute thread removes acknowledged receipts. At most two computed receipts
 are pending in this pipeline, and one upload is active. Renewal continues until
 the final acknowledgement. Host regressions require computation to advance while
 an upload is blocked and verify recovery of both receipts after the first upload
-fails. This change postdates the local APK layout check and needs a consolidated
-build and device performance measurement; no throughput gain is claimed yet.
+fails. This pipeline is included in the built, layout-checked and installed 0.4.12 APK.
+A device performance measurement is still needed; no throughput gain is claimed.
 
 The pending Windows client also negotiates up to eight reservations per request.
 It refreshes controls while consuming the batch and refetches expired local

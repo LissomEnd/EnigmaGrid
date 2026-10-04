@@ -17,15 +17,15 @@ async function refresh(){
   $('done').textContent=fmt(s.completed_units);$('online').textContent=fmt(s.online_devices);
   $('pending').textContent=fmt(s.pending_validations);$('cpuOnline').textContent=fmt(s.online_cpu_devices);
   $('gpuOnline').textContent=fmt(s.online_gpu_devices);$('searchProgress').value=Math.min(100,Number(s.progress_pct)||0);
-  $('progressText').textContent=fmt(s.completed_units)+' of '+fmt(s.total_units)+' unique work units verified';
+  $('progressText').textContent=fmt(s.completed_units)+' of '+fmt(s.total_units)+' unique work units completed · '+fmt(s.verified_units??s.completed_units)+' independently verified · '+fmt(s.accepted_trusted_units)+' accepted with sampling';
   const leaders=s.leaderboard||[];
-  $('leaders').innerHTML=leaders.length?leaders.map(x=>'<tr><td>'+esc(x.display_name)+'</td><td>'+fmt(x.units)+'</td><td>'+fmt(x.jobs)+'</td><td>'+age(x.compute_seconds)+'</td></tr>').join(''):'<tr><td colspan="4" class="muted">No verified contributions yet.</td></tr>';
+  $('leaders').innerHTML=leaders.length?leaders.map(x=>'<tr><td>'+esc(x.display_name)+'</td><td>'+fmt(x.units)+'</td><td>'+fmt(x.jobs)+'</td><td>'+age(x.compute_seconds)+'</td></tr>').join(''):'<tr><td colspan="4" class="muted">No credited contributions yet.</td></tr>';
   $('campaigns').innerHTML=(s.campaigns||[]).filter(x=>x.status!=='archived').map(x=>'<div class="campaign"><div><b>'+esc(x.name)+'</b><div class="muted">'+esc(x.version)+'</div></div><div class="state">'+esc(x.status)+'</div></div>').join('');
  }catch(e){live(false,'Connection lost · figures may be outdated');$('launchState').textContent='Connection unavailable. Registration status could not be confirmed.'}
 }
 function deviceHtml(d){
  const safeId=esc(d.id);
- const st=d.settings||{},caps=d.capabilities||[],gpu=caps.includes('opencl');
+ const st=d.settings||{},caps=d.capabilities||[],gpu=caps.some(x=>['opencl','gpu','cuda'].includes(x));
  const state=d.quarantined?'<span class="warn">quarantined</span>':(d.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>');
  return '<div class="device"><b>'+esc(d.label)+'</b> · '+state+' · trust '+Number(d.trust_score||0).toFixed(2)+
  '<p class="muted">'+caps.map(esc).join(', ')+' · valid '+fmt(d.valid_jobs)+' · invalid '+fmt(d.invalid_jobs)+'</p>'+
@@ -34,7 +34,7 @@ function deviceHtml(d){
  '<label for="gpu-'+safeId+'">GPU contribution: <b id="gv-'+safeId+'">'+Number(st.gpu_percent||0)+'%</b></label>'+
  '<input data-kind="gpu" data-device="'+safeId+'" type="range" min="0" max="100" step="5" value="'+Number(st.gpu_percent||0)+'" id="gpu-'+safeId+'" '+(gpu?'':'disabled')+'>'+
  '<p class="small muted">CPU sets a thread budget; GPU sets a work/rest budget. Changes apply to the next job. Setting both to zero stops new computation; use Pause in the app to pause the current job.</p>'+
- (gpu?'':'<p class="small muted">No qualified OpenCL GPU was reported. CPU contribution is available.</p>')+
+ (gpu?'':'<p class="small muted">No qualified GPU was reported. CPU contribution is available.</p>')+
  '<p><button data-action="save" data-device="'+safeId+'">Save limits</button></p><p id="saved-'+safeId+'" role="status" class="small"></p></div>';
 }
 async function loadMe(){
@@ -48,7 +48,7 @@ async function loadMe(){
   const x=await r.json(),st=x.stats||{};
   if(request!==privateRequest)return;
   loadedToken=token;$('me').className='personal';$('accountActions').hidden=false;
-  $('me').innerHTML='<p><b>'+esc(x.display_name)+'</b></p><p>'+fmt(st.units)+' verified units · '+fmt(x.pending_units)+' pending · '+fmt(st.jobs)+' jobs · '+age(st.compute_seconds)+' compute</p>'+(x.devices||[]).map(deviceHtml).join('');
+  $('me').innerHTML='<p><b>'+esc(x.display_name)+'</b></p><p>'+fmt(st.credited_units??st.units)+' credited units ('+fmt(st.verified_units??st.units)+' independently verified, '+fmt(st.accepted_trusted_units)+' accepted with sampling) · '+fmt(x.pending_units)+' pending · '+fmt(st.credited_jobs??st.jobs)+' jobs · '+age(st.compute_seconds)+' compute</p>'+(x.devices||[]).map(deviceHtml).join('');
  }catch(e){if(request===privateRequest){$('me').className='personal error';$('me').textContent='Dashboard token is invalid or the coordinator is unavailable.';$('accountActions').hidden=true;}}
  finally{if(request===privateRequest)$('loadBtn').disabled=false;}
 }

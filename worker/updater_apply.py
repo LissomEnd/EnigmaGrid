@@ -100,14 +100,16 @@ def preflight(stage,kind):
             if not p.exists() or p.stat().st_size<100000 or p.read_bytes()[:2]!=b"MZ":
                 raise ValueError("invalid_frozen_executable:"+p.name)
         r=subprocess.run([str(stage/"EnigmaGridWorker.exe"),"--self-test"],
-                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120)
+                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120,
+                         creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0)
         if r.returncode!=0:raise ValueError("frozen_worker_self_test_failed")
         return
     files=[stage/"worker"/x for x in ("worker.py","updater.py","updater_apply.py")]
 
     if not all(x.exists() for x in files):raise ValueError("update_missing_required_worker_files")
     r=subprocess.run([sys.executable,"-m","py_compile",*[str(x) for x in files]],
-                     stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,timeout=60)
+                     stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,timeout=60,
+                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0)
     if r.returncode!=0:raise ValueError("update_preflight_failed:"+r.stderr[-500:])
 
 def spawn_worker(root,state,server,kind):

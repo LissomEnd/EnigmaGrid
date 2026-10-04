@@ -460,6 +460,35 @@ def run_portable(lease,runtime=None,state_path=None):
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 
+def constrained_process_limit(requested, available_bytes=None, total_bytes=None, existing_workers=0):
+    """Conservative child-process ceiling; the CPU slider remains an upper bound."""
+    if available_bytes is None or total_bytes is None:
+        try:
+            if os.name != 'nt':
+                import psutil
+                memory=psutil.virtual_memory()
+                available_bytes,total_bytes=memory.available,memory.total
+            else:
+                class MemoryStatus(ctypes.Structure):
+                    _fields_=[('length',ctypes.c_ulong),('load',ctypes.c_ulong)]+[(name,ctypes.c_ulonglong) for name in ('total','available','page_total','page_available','virtual_total','virtual_available','extended')]
+                memory=MemoryStatus();memory.length=ctypes.sizeof(memory)
+                if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memory)):
+                    return 0
+                available_bytes,total_bytes=memory.available,memory.total
+        except Exception:
+            return 0
+    reserve=max(2*1024**3,int(total_bytes*.25))
+    budget=max(0,int(available_bytes)-reserve+max(0,int(existing_workers))*512*1024**2)
+    # Frozen children import the solver/native runtime independently. Reserve
+    # 512 MiB per child and never create more than eight on a consumer machine.
+    return min(8,max(0,int(requested)),budget//(512*1024**2))
+
+
+def release_constrained_pool(runtime):
+    pool=runtime.pop('_constrained_pool',None)
+    if pool is not None:pool.close()
+
+
 def run_constrained_parallel(lease,runtime,state_path):
     from search.crib_work import run
     from search.process_map import OrderedProcessMap
@@ -468,7 +497,14 @@ def run_constrained_parallel(lease,runtime,state_path):
     percent=max(0,min(100,int(settings.get('cpu_percent',0))))
     if not settings.get('allow_cpu',True) or not percent:
         raise InterruptedError('CPU disabled during constrained work')
-    count=min(32,max(1,math.ceil((os.cpu_count() or 1)*percent/100)))
+    requested=min(32,max(1,math.ceil((os.cpu_count() or 1)*percent/100)))
+    pool=runtime.get('_constrained_pool')
+    count=constrained_process_limit(requested,existing_workers=pool.workers if pool else 0)
+    if not count:
+        release_constrained_pool(runtime)
+        runtime['resource']='CPU';runtime['cpu_threads']=1
+        serial=dict(runtime,_parallel_constrained=False)
+        return run_constrained(lease,serial,state_path)
     pool=runtime.get('_constrained_pool')
     if pool is not None and pool.workers!=count:
         pool.close();pool=None
@@ -593,6 +629,7 @@ def _work(args,state,runtime):
                 control["check_update"]=False;write_control(state_path,control)
                 if updater:updater.force_check()
             if control["paused"]:
+                release_constrained_pool(runtime)
                 publish_health(runtime,"paused")
                 time.sleep(args.idle_seconds);continue
             if updater and updater.stop_requested:
@@ -622,7 +659,9 @@ def _work(args,state,runtime):
             runtime["cpu_threads"]=apply_cpu_limit(100 if constrained else st["cpu_percent"])
             if got.get("update_required") and updater:updater.force_check()
             lease=got.get("lease")
+            if lease and lease.get('engine')!='bounded_crib_v1':release_constrained_pool(runtime)
             if not lease:
+                release_constrained_pool(runtime)
                 publish_health(runtime,"waiting")
                 if args.once:return 0
                 time.sleep(args.idle_seconds);continue
@@ -660,6 +699,7 @@ def _work(args,state,runtime):
             if args.once:return 0
         except KeyboardInterrupt:return 130
         except Exception as e:
+            release_constrained_pool(runtime)
             publish_health(runtime,"connection_error")
             print(json.dumps({"worker_error":repr(e)}),flush=True)
             if args.once:return 2

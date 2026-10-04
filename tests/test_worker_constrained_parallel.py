@@ -9,7 +9,9 @@ def main():
  job=dict(engine='bounded_crib_v1',ciphertext='A'*72,crib='B'*24,offset=0,core_indices=list(range(32)),model='clean',pairs=10,budgets=dict(node_limit=10,board_limit=1,completion_limit=1,candidate_limit=1))
  lease=dict(engine='bounded_crib_v1',start_unit=0,end_unit=1,config=dict(job=job,requires=['cpu','bounded_crib_v1']))
  runtime={'settings':{'cpu_percent':100,'allow_cpu':True},'_parallel_constrained':True}
- with tempfile.TemporaryDirectory() as tmp,patch.object(worker.os,'cpu_count',return_value=2):
+ # Resource-limit policy is covered separately; parity needs a deterministic
+ # two-child fixture regardless of the test host's free RAM.
+ with tempfile.TemporaryDirectory() as tmp,patch.object(worker.os,'cpu_count',return_value=2),patch.object(worker,'constrained_process_limit',side_effect=lambda requested,**kw:min(2,requested)):
   state=Path(tmp)/'state.json';worker.write_control(state,{})
   try:
    expected=worker.run_constrained(lease,{'settings':runtime['settings']},state)

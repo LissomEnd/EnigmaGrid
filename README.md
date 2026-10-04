@@ -30,8 +30,21 @@ The Windows app provides:
 
 The public HTTPS endpoint is bundled with the installer. Volunteers do not need Tailscale or access to the server's private network.
 
+### Experimental Android client
+
+See the [Android client guide](android/README.md) for APK installation, resource
+controls, background-work limitations and optional update downloads. Android
+[0.4.12 is published as an experimental APK](https://github.com/LissomEnd/EnigmaGrid/releases/tag/android-v0.4.12)
+and has resumed contribution on RedMagic; one real production
+receipt was independently reproduced. Its consolidated build includes bounded
+compute/upload overlap, batched assignments and CPU row-generation improvements.
+ARM64, ARMv7 and x86_64 libraries pass package/ELF alignment checks; this does not
+prove execution on every device, GPU driver or Android version. Sliders set
+activity budgets, not guaranteed hardware utilization. Use only APKs actually
+published in official releases; local qualification is not publication.
+
 ### Hardware and resource controls
-CPU contribution works without a compatible GPU. The GPU backend uses OpenCL and checks each detected GPU against the CPU scorer before enabling it. AMD integrated graphics and Intel Iris Plus have passed real-device parity tests; other GPUs, including NVIDIA OpenCL devices, require compatible drivers and the same startup check. Detection does not guarantee that every device or driver will work. The official installer targets Windows x64; other operating systems and architectures are not yet release-tested.
+CPU contribution works without a compatible GPU. The GPU backend uses OpenCL and checks each detected GPU against the CPU scorer before enabling it. AMD integrated graphics and Intel Iris Plus have passed real-device parity tests; other GPUs, including NVIDIA OpenCL devices, require compatible drivers and the same startup check. Detection does not guarantee that every device or driver will work. The official Windows installer targets Windows x64. A separate experimental Android client is described below; other platforms are not release-tested.
 
 The CPU slider sets a computation-thread budget. The GPU slider sets a work/rest budget. These are scheduling limits, not guarantees of a particular Task Manager utilization reading. GPU work still needs some CPU time for coordination. Set a resource to zero to stop assigning it new work; changed budgets apply at the next job. Pause suspends portable search at its next checkpoint, and safe stop finishes the current job before closing. Closing the window keeps the tray application running; use its stop control to end contribution.
 
@@ -84,3 +97,7 @@ bounded-crib engine. Resource limits and campaign priorities are unchanged.
 hybrid worker results. Current physical validation covers one AMD GPU; concurrent
 multiple-device execution has adapter coverage but awaits physical multi-GPU
 validation and a Windows installer release. No utilization or speedup guarantee.
+
+The Windows 0.4.4 build workflow and artifact attestation have passed. Final
+release tests remain in progress; this version is not yet a published Windows
+release and has not been deployed to participating Windows devices.
