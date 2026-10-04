@@ -1,0 +1,69 @@
+name: Qualify Android CPU platform compatibility
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-cpu-platform-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [26, 35]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Select runner Java 17
+        run: |
+          test -x "$JAVA_HOME_17_X64/bin/java"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          "$JAVA_HOME_17_X64/bin/java" -version
+      - name: Install pinned Android build packages
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          # Preserve sdkmanager's exit status, not yes's expected SIGPIPE.
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          set -o pipefail
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Install checksum-pinned Gradle 8.9
+        run: |
+          curl --fail --location --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$RUNNER_TEMP/gradle-8.9-bin.zip"
+          # Official services.gradle.org/distributions/gradle-8.9-bin.zip.sha256
+          echo "d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab  $RUNNER_TEMP/gradle-8.9-bin.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/gradle-8.9-bin.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+      - name: Build isolated lab APK
+        run: gradle -p android --no-daemon --max-workers=2 :app:assembleLab
+      - name: Prepare emulator system and acceleration
+        env:
+          API_LEVEL: ${{ matrix.api }}
+        run: |
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'emulator' 'platform-tools' "system-images;android-$API_LEVEL;google_apis;x86_64"
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name enigmagrid-cpu --package "system-images;android-$API_LEVEL;google_apis;x86_64"
+      - name: Run CPU receipts and encrypted storage on emulator
+        env:
+          API_LEVEL: ${{ matrix.api }}
+        run: python3 android/scripts/qualify_cpu_emulator.py
+      - name: Upload bounded qualification diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-cpu-api-${{ matrix.api }}-${{ github.sha }}
+          path: android-emulator-results/
+          retention-days: 7
+          if-no-files-found: warn

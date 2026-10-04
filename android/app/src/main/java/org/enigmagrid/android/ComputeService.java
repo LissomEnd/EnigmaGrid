@@ -157,7 +157,7 @@ public final class ComputeService extends Service {
 
             PendingIntent command=PendingIntent.getService(this,action.hashCode(),new Intent(this,ComputeService.class).setAction(action),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
 
-            builder.addAction(new Notification.Action.Builder(null,action.substring(0,1).toUpperCase()+action.substring(1),command).build());
+            builder.addAction(new Notification.Action.Builder(null,action.substring(0,1).toUpperCase(java.util.Locale.ROOT)+action.substring(1),command).build());
 
         }
 
