@@ -1,0 +1,11 @@
+<resources>
+    <style name="EnigmaTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#43DDD0</item>
+        <item name="android:windowBackground">#081522</item>
+        <item name="android:statusBarColor">#081522</item>
+        <item name="android:navigationBarColor">#081522</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorControlNormal">#91B2BD</item>
+    </style>
+</resources>

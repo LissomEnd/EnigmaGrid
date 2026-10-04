@@ -1,0 +1,22 @@
+#version 450
+// Electrical permutations for bounded crib constraints, integer-only Vulkan 1.0.
+// Input: row count, 12*26 forward + 12*26 inverse contacts, then 9 ints/row:
+// four rotor IDs, reflector ID, four already-stepped position-minus-ring offsets.
+layout(local_size_x=64,local_size_y=1,local_size_z=1) in;
+layout(set=0,binding=0,std430) readonly buffer Input { uint data[]; } inputData;
+layout(set=0,binding=1,std430) writeonly buffer Output { uint values[]; } outputData;
+uint passRotor(uint x,uint rotor,uint offset,bool reverse) {
+    uint base=1u+(reverse?312u:0u)+rotor*26u;
+    return (inputData.data[base+(x+offset)%26u]+26u-offset)%26u;
+}
+void main() {
+    uint id=gl_GlobalInvocationID.x;
+    uint row=id/26u;
+    if(row>=inputData.data[0])return;
+    uint base=625u+row*9u;
+    uint x=id%26u;
+    for(int j=3;j>=0;j--)x=passRotor(x,inputData.data[base+uint(j)],inputData.data[base+5u+uint(j)],false);
+    x=inputData.data[1u+inputData.data[base+4u]*26u+x];
+    for(uint j=0u;j<4u;j++)x=passRotor(x,inputData.data[base+j],inputData.data[base+5u+j],true);
+    outputData.values[id]=x;
+}

@@ -1,0 +1,37 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'org.enigmagrid.android'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        applicationId 'org.enigmagrid.android'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.4.3'
+        ndk { abiFilters 'arm64-v8a', 'x86_64', 'armeabi-v7a' }
+        externalNativeBuild { cmake { cppFlags '-std=c++17' } }
+    }
+    signingConfigs {
+        release {
+            if (System.getenv('ENIGMAGRID_ANDROID_KEYSTORE')) {
+                storeFile file(System.getenv('ENIGMAGRID_ANDROID_KEYSTORE'))
+                storePassword System.getenv('ENIGMAGRID_ANDROID_STORE_PASSWORD')
+                keyAlias 'enigmagrid'
+                keyPassword System.getenv('ENIGMAGRID_ANDROID_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release { signingConfig signingConfigs.release }
+        lab {
+            initWith debug
+            applicationIdSuffix '.lab'
+            matchingFallbacks = ['debug']
+        }
+    }
+    externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt'; version '3.22.1' } }
+    buildFeatures { shaders true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies { implementation project(':core') }
