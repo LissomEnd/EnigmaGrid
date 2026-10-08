@@ -29,8 +29,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+      - name: Install client and build dependencies
+        run: python -m pip install -r requirements-build.txt
       - name: Compile
         run: python -m py_compile server/coordinator.py server/validator.py worker/worker.py worker/updater.py worker/updater_apply.py worker/tray_app.py worker/installer.py scripts/create_update_manifest.py scripts/create_installer_payload.py scripts/sign_update_manifest_dpapi.py
       - name: Check dashboard JavaScript
@@ -83,6 +83,22 @@ jobs:
         run: python tests/test_worker_constrained_parallel.py
       - name: Memory-aware workers and hidden update helpers
         run: python tests/test_worker_memory_and_hidden_updates.py
+      - name: Windows block durability and resource controls
+        shell: pwsh
+        run: |
+          $tests = @(
+            'test_block_queue.py', 'test_block_pipeline.py', 'test_block_persistence_overlap.py',
+            'test_block_control_lifecycle.py', 'test_work_blocks.py', 'test_work_result_groups.py',
+            'test_receipt_outbox.py', 'test_completion_transport.py', 'test_cpu_budget.py',
+            'test_vulkan_bounded_adapter.py', 'test_bounded_gpu_qualification.py',
+            'test_worker_gpu_qualification_control.py', 'test_worker_hybrid_routing.py',
+            'test_thermal_legacy_controls.py', 'test_installer_controls.py',
+            'test_summary_cache.py', 'test_monitor_navigation.py', 'test_worker_throughput.py'
+          )
+          foreach ($test in $tests) {
+            python "tests/$test"
+            if ($LASTEXITCODE -ne 0) { throw "Client regression failed: $test" }
+          }
       - name: Windows console-free spawn context
         run: python tests/test_windows_hidden_spawn.py
       - name: Combined lease control snapshot

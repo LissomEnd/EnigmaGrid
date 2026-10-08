@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(enigmagrid_solver LANGUAGES CXX)
+find_package(Vulkan REQUIRED)
+add_library(enigmagrid_solver SHARED ../../android/app/src/main/cpp/vulkan_solver.cpp)
+target_compile_features(enigmagrid_solver PRIVATE cxx_std_17)
+target_compile_definitions(enigmagrid_solver PRIVATE ENIGMAGRID_NO_JNI)
+target_link_libraries(enigmagrid_solver PRIVATE Vulkan::Vulkan)
+if(NOT Vulkan_GLSLC_EXECUTABLE)
+  message(FATAL_ERROR "glslc is required to build the bounded solver shader")
+endif()
+set(SOLVER_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/../../android/app/src/main/shaders/bounded_solver.comp")
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/bounded_solver.spv"
+  COMMAND "${Vulkan_GLSLC_EXECUTABLE}" -O "${SOLVER_SHADER}" -o "${CMAKE_CURRENT_BINARY_DIR}/bounded_solver.spv"
+  DEPENDS "${SOLVER_SHADER}" VERBATIM)
+add_custom_target(bounded_solver_shader ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/bounded_solver.spv")
+install(TARGETS enigmagrid_solver RUNTIME DESTINATION . LIBRARY DESTINATION .)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/bounded_solver.spv" DESTINATION .)

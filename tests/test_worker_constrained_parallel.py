@@ -11,7 +11,7 @@ def main():
  runtime={'settings':{'cpu_percent':100,'allow_cpu':True},'_parallel_constrained':True}
  # Resource-limit policy is covered separately; parity needs a deterministic
  # two-child fixture regardless of the test host's free RAM.
- with tempfile.TemporaryDirectory() as tmp,patch.object(worker.os,'cpu_count',return_value=2),patch.object(worker,'constrained_process_limit',side_effect=lambda requested,**kw:min(2,requested)):
+ with tempfile.TemporaryDirectory() as tmp,patch.object(worker.os,'cpu_count',return_value=2),patch.object(worker,'constrained_process_limit',side_effect=lambda requested,**kw:min(2,requested)),patch.object(worker.windows_telemetry.SystemTelemetry,'sample',return_value={}):
   state=Path(tmp)/'state.json';worker.write_control(state,{})
   try:
    expected=worker.run_constrained(lease,{'settings':runtime['settings']},state)

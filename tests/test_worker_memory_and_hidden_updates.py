@@ -6,7 +6,7 @@ from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1];sys.path[:0]=[str(ROOT/'worker'),str(ROOT/'solver/runtime/src')]
 import worker,updater,updater_apply
 G=1024**3
-assert worker.constrained_process_limit(32,available_bytes=12*G,total_bytes=16*G)==8
+assert worker.constrained_process_limit(32,available_bytes=12*G,total_bytes=16*G)==16
 assert worker.constrained_process_limit(32,available_bytes=5*G,total_bytes=16*G)==2
 assert worker.constrained_process_limit(32,available_bytes=3*G,total_bytes=16*G)==0
 assert worker.constrained_process_limit(1,available_bytes=12*G,total_bytes=16*G)==1
@@ -33,3 +33,15 @@ with tempfile.TemporaryDirectory() as d:
   if sys.platform=='win32':
    flags=launch.call_args.kwargs['creationflags'];assert flags & updater.subprocess.CREATE_NO_WINDOW and not flags & updater.subprocess.DETACHED_PROCESS
 print('HEADLESS_MEMORY_LIMIT_SERIAL_FALLBACK_POOL_RELEASE_AND_HIDDEN_UPDATER_OK')
+
+# More cores may be used only when the unchanged memory reserve supports them.
+assert worker.constrained_process_limit(24,available_bytes=20*G,total_bytes=32*G)==24
+assert worker.constrained_process_limit(32,available_bytes=20*G,total_bytes=32*G)==24
+for total in (8,16,32,64):
+ for free in (1,3,5,8,12,20):
+  if free>total:continue
+  for requested in (1,2,8,16,32):
+   count=worker.constrained_process_limit(requested,available_bytes=free*G,total_bytes=total*G)
+   assert 0<=count<=requested
+   if count:assert free*G-count*512*1024**2>=max(2*G,int(total*G*.25))
+print('PASS requested core scaling without weakening memory reserve')

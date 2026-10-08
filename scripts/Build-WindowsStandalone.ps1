@@ -1,5 +1,14 @@
+param([string]$NativeSolverDirectory)
 $ErrorActionPreference="Stop"
 $root=Split-Path $PSScriptRoot -Parent
+if (-not $NativeSolverDirectory) { $NativeSolverDirectory=Join-Path $root 'worker\native\build\install' }
+$nativeLibrary=Join-Path $NativeSolverDirectory 'enigmagrid_solver.dll'
+$nativeShader=Join-Path $NativeSolverDirectory 'bounded_solver.spv'
+foreach ($nativeAsset in @($nativeLibrary,$nativeShader)) {
+  if (-not (Test-Path -LiteralPath $nativeAsset -PathType Leaf)) {
+    throw "Missing bounded Vulkan asset: $nativeAsset. Build/install worker/native first or specify -NativeSolverDirectory."
+  }
+}
 $py="$root\.venv-server\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $py)) { $py=(Get-Command python -ErrorAction Stop).Source }
 $out="$root\dist\windows-candidate"
@@ -35,6 +44,10 @@ $worker=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--console",
   "--add-data","$solverStage;solver",
   "--add-data","$root\worker\update_config.json;worker",
   "--add-data","$root\worker\update_public_key.json;worker",
+  "--add-binary","$nativeLibrary;worker/native",
+  "--add-data","$nativeShader;worker/native",
+  "--hidden-import","bounded_gpu_qualification",
+  "--hidden-import","search.vulkan_bounded",
   "--hidden-import","updater","--collect-all","pyopencl",
   "--hidden-import","search.portable_search","--hidden-import","search.process_map","--hidden-import","search.windows_spawn",
   "--hidden-import","search.bounded_crib") + $commonMeta + @("$root\worker\worker.py")
@@ -57,7 +70,7 @@ $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$out\*" -DestinationPath $zip -CompressionLevel Optimal
 
-& $py "$root\scripts\create_installer_payload.py" $out "0.4.4"
+& $py "$root\scripts\create_installer_payload.py" $out "0.4.14"
 if($LASTEXITCODE -ne 0){throw "Installer payload manifest failed"}
 $setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
   "--name","EnigmaGridSetup","--distpath","$root\dist","--workpath","$work\setup","--specpath",$spec,
