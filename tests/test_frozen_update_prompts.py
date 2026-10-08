@@ -177,7 +177,14 @@ def main():
                     if worker.poll() is not None:raise RuntimeError('Fixture worker exited before acquiring work')
                     try:return json.loads(state.with_name('worker-health.json').read_text()).get('status')=='computing'
                     except (OSError,ValueError):return False
-                wait_for(computing,30)
+                try:wait_for(computing,30)
+                except TimeoutError:
+                    # Preserve actionable fixture diagnostics before finally removes
+                    # its private temporary directory; never read production state.
+                    health=state.with_name('worker-health.json')
+                    print('BUSY_FIXTURE_HEALTH',health.read_text() if health.exists() else 'missing',flush=True)
+                    print('BUSY_FIXTURE_LOG',(case/'worker.log').read_text(errors='replace')[-2000:],flush=True)
+                    raise
                 release_ready.set()
             print('WAITING_FOR_REAL_DIALOG',label,flush=True)
             hwnd,text=wait_for(lambda:dialog_for(install),90)

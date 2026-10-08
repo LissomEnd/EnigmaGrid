@@ -93,6 +93,50 @@ except ValueError:pass
 else:raise AssertionError('Out-of-domain key accepted')
 print('CRIB_CANDIDATE_REPLAY_AND_DOMAIN_OK')
 
+# Warming the mechanical-scope cache must not cache acceptance or expose mutable
+# keys to callers. Changed assignments and forged candidates still get checked.
+from search.crib_work import _receipt_core_json
+import json
+_receipt_core_json.cache_clear()
+assert validate_receipt_shape(positive,found)[0]==found
+decoded=json.loads(_receipt_core_json(tuple(positive['config']['job']['core_indices'])))
+next(iter(decoded.values()))['positions']='ZZZZ'
+assert validate_receipt_shape(positive,found)[0]==found
+changed=copy.deepcopy(positive)
+changed['config']['job']['core_indices']=[128]
+try:validate_receipt_shape(changed,found)
+except ValueError:pass
+else:raise AssertionError('Cached receipt accepted for different assigned cores')
+try:validate_receipt_shape(positive,forged)
+except ValueError:pass
+else:raise AssertionError('Warm cache bypassed candidate validation')
+assert _receipt_core_json.cache_info().maxsize==128
+print('CRIB_SCOPE_CACHE_ISOLATION_OK')
+
+# Indexed cores must retain exactly the independently normalized scope hashes,
+# across every rotor/reflector/Greek combination and position/ring carries.
+from search.crib_pilot import DOMAIN, ORDERS
+from search.c3_models import normalize
+from search.bounded_crib import digest
+import random
+indices={0,DOMAIN-1}
+for prefix in range(4*len(ORDERS)):
+    base=prefix*26**6
+    indices.update((base,base+26**6-1))
+for power in range(1,7):
+    indices.update((26**power-1,26**power))
+rng=random.Random(4921)
+indices.update(rng.randrange(DOMAIN) for _ in range(1024))
+for index in sorted(indices):
+    expected=asdict(normalize(core_at(index)))
+    assert json.loads(_receipt_core_json((index,)))==json.loads(json.dumps({digest(expected):expected}))
+for invalid in (-1,DOMAIN,True,1.0):
+    _receipt_core_json.cache_clear()
+    try:_receipt_core_json((invalid,))
+    except ValueError:pass
+    else:raise AssertionError('Invalid indexed core accepted')
+print('CRIB_INDEXED_CORE_NORMALIZATION_PARITY_OK')
+
 program=dict(ciphertext='A'*72,hypotheses=[dict(text='B'*24,legal_clean_offsets=[0])],chunk=4,ordinal_base=17,candidate_limit=8)
 scheduled=dict(engine='bounded_crib_v1',start_unit=0,end_unit=1,config=dict(program=program,requires=['cpu','bounded_crib_v1']))
 first=validate_envelope(scheduled)

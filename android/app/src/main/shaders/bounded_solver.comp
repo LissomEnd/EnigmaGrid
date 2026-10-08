@@ -1,0 +1,96 @@
+#version 450
+// Experimental fixed-core bounded solver. One invocation owns one independent core.
+// Disabled until CPU parity and physical-device throughput qualification pass.
+layout(local_size_x=16) in;
+layout(std430,binding=0) readonly buffer Input { uint inputData[]; };
+layout(std430,binding=1) buffer Output { int outputData[]; };
+layout(std430,binding=2) buffer Scratch { uint scratch[]; };
+const uint HASH_SIZE=16384u, SCRATCH_STRIDE=41384u, OUTPUT_STRIDE=1667u;
+int boards[702]; int used[27]; int branch[27]; int nextValue[27];
+int core,edges,pairs,nodeLimit,solutionLimit;
+uint scratchBase,outBase,rowsBase,edgesBase,hashSize;
+bool extendBoard(inout int p[26],inout int count,int a,int b){
+    if((p[a]!=-1&&p[a]!=b)||(p[b]!=-1&&p[b]!=a))return false;
+    if(p[a]==b)return true;
+    int total=count+(a==b?0:1);if(total>pairs)return false;
+    p[a]=b;p[b]=a;count=total;return true;
+}
+int row(int position,int letter){return int(inputData[rowsBase+uint(position*26+letter)]);}
+bool seenBefore(int p[26],int node){
+    uint words[5];for(int i=0;i<5;i++)words[i]=0u;
+    for(int i=0;i<26;i++){
+        uint bit=uint(i*5),value=uint(p[i]+1);words[bit/32u]|=value<<(bit%32u);
+        if(bit%32u>27u)words[bit/32u+1u]|=value>>(32u-bit%32u);
+    }
+    uint hash=2166136261u;for(int i=0;i<5;i++)hash=(hash^words[i])*16777619u;
+    uint slot=hash&(hashSize-1u);
+    for(uint attempt=0u;attempt<hashSize;attempt++){
+        uint prior=scratch[scratchBase+slot];
+        if(prior==0u){
+            scratch[scratchBase+slot]=uint(node);
+            for(int i=0;i<5;i++)scratch[scratchBase+HASH_SIZE+uint((node-1)*5+i)]=words[i];
+            return false;
+        }
+        bool same=true;for(int i=0;i<5;i++)same= same && scratch[scratchBase+HASH_SIZE+(prior-1u)*5u+uint(i)]==words[i];
+        if(same)return true;slot=(slot+1u)&(hashSize-1u);
+    }
+    return false; // Unreachable: at most5000 entries in16384 slots.
+}
+void main(){
+    core=int(gl_GlobalInvocationID.x);if(core>=int(inputData[0]))return;
+    edges=int(inputData[1]);pairs=int(inputData[2]);nodeLimit=int(inputData[3]);solutionLimit=int(inputData[4]);
+    uint outputStride=3u+uint(solutionLimit)*26u;
+    scratchBase=uint(core)*SCRATCH_STRIDE;outBase=uint(core)*outputStride;
+    for(uint i=0u;i<outputStride;i++)outputData[outBase+i]=0;
+    hashSize=2u;while(hashSize<uint(nodeLimit)*2u)hashSize*=2u;
+    rowsBase=5u+uint(core*edges*26);edgesBase=5u+inputData[0]*uint(edges*26);
+    // Host transfer commands clear this core's hash headers before dispatch.
+    // A transfer-to-compute barrier makes that reset visible here.
+    for(int i=0;i<26;i++)boards[i]=-1;
+    used[0]=0;branch[0]=-2;nextValue[0]=0;
+    int depth=0,nodes=0,answers=0;bool cutoff=false;
+    while(depth>=0){
+        int p[26];for(int j=0;j<26;j++)p[j]=boards[depth*26+j];int count=used[depth];
+        if(branch[depth]==-2){
+            if(nodes>=nodeLimit||answers>=solutionLimit){cutoff=true;break;}
+            nodes++;if(seenBefore(p,nodes)){depth--;continue;}
+            bool changed=true,valid=true;
+            while(changed&&valid){
+                changed=false;
+                for(int e=0;e<edges;e++){
+                    int position=int(inputData[edgesBase+uint(e*3)]),a=int(inputData[edgesBase+uint(e*3+1)]),b=int(inputData[edgesBase+uint(e*3+2)]);
+                    if(p[a]!=-1){int old=p[b];if(!extendBoard(p,count,b,row(position,p[a]))){valid=false;break;}changed=changed||p[b]!=old;}
+                    if(p[b]!=-1){int old=p[a];if(!extendBoard(p,count,a,row(position,p[b]))){valid=false;break;}changed=changed||p[a]!=old;}
+                }
+            }
+            if(!valid){depth--;continue;}
+            int selected=-1,best=27;
+            for(int e=0;e<edges;e++){
+                int position=int(inputData[edgesBase+uint(e*3)]),a=int(inputData[edgesBase+uint(e*3+1)]),b=int(inputData[edgesBase+uint(e*3+2)]);
+                if(p[a]!=-1&&p[b]!=-1)continue;
+                int options=0;
+                for(int x=0;x<26;x++){int q[26];for(int j=0;j<26;j++)q[j]=p[j];int n=count;if(extendBoard(q,n,a,x)&&extendBoard(q,n,b,row(position,x)))options++;}
+                if(options==0){valid=false;break;}
+                if(options<best){best=options;selected=e;}
+            }
+            if(!valid){depth--;continue;}
+            if(selected==-1){
+                bool duplicate=false;
+                for(int n=0;n<answers;n++){bool same=true;for(int j=0;j<26;j++)same=same&&outputData[outBase+3u+uint(n*26+j)]==p[j];duplicate=duplicate||same;}
+                if(!duplicate){for(int j=0;j<26;j++)outputData[outBase+3u+uint(answers*26+j)]=p[j];answers++;}
+                depth--;continue;
+            }
+            for(int j=0;j<26;j++)boards[depth*26+j]=p[j];used[depth]=count;branch[depth]=selected;nextValue[depth]=0;
+        }
+        int e=branch[depth],position=int(inputData[edgesBase+uint(e*3)]),a=int(inputData[edgesBase+uint(e*3+1)]),b=int(inputData[edgesBase+uint(e*3+2)]);
+        bool descended=false;
+        while(nextValue[depth]<26){
+            int x=nextValue[depth]++;int q[26];for(int j=0;j<26;j++)q[j]=boards[depth*26+j];int n=used[depth];
+            if(!extendBoard(q,n,a,x)||!extendBoard(q,n,b,row(position,x)))continue;
+            if(depth>=26){cutoff=true;break;}
+            depth++;for(int j=0;j<26;j++)boards[depth*26+j]=q[j];used[depth]=n;branch[depth]=-2;nextValue[depth]=0;descended=true;break;
+        }
+        if(cutoff)break;if(!descended)depth--;
+    }
+    outputData[outBase]=cutoff?2:(answers==0?0:1);outputData[outBase+1u]=nodes;outputData[outBase+2u]=answers;
+}

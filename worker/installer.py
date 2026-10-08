@@ -12,10 +12,11 @@ import tkinter as tk
 import winreg
 from pathlib import Path
 from tkinter import messagebox
+from file_state import atomic_write
 
 APP_ID="EnigmaVolunteerGrid"
 APP_NAME="Enigma Volunteer Grid"
-VERSION="0.4.4"
+VERSION="0.4.14"
 RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
 UNINSTALL_BASE=r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 PAYLOAD_NAMES=("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt")
@@ -64,11 +65,27 @@ def reg_delete_value(path,name):
             winreg.DeleteValue(k,name)
     except (FileNotFoundError,OSError):pass
 
+def read_control(data):
+    try:control=json.loads((data/'control.json').read_text(encoding='utf-8'))
+    except FileNotFoundError:return {'paused':False,'stop_requested':False,'check_update':False}
+    if not isinstance(control,dict):raise ValueError('Invalid existing control settings')
+    return control
+
+
+def restore_control(data,previous):
+    control=read_control(data)
+    # Retain temperature/settings changes made while the worker was draining.
+    for key in ('paused','stop_requested','check_update'):
+        control[key]=previous.get(key,False)
+    atomic_write(data/'control.json',json.dumps(control).encode('utf-8'))
+
+
 def write_control(data,stop=True):
     data.mkdir(parents=True,exist_ok=True)
-    (data/"control.json").write_text(json.dumps({
-        "paused":False,"stop_requested":bool(stop),"check_update":False}),encoding="utf-8")
-    (data/"update-exit").write_text("1",encoding="ascii")
+    control=read_control(data)
+    control['stop_requested']=bool(stop)
+    atomic_write(data/'control.json',json.dumps(control).encode('utf-8'))
+    atomic_write(data/'update-exit',b'1')
 
 def wait_worker_stopped(data,timeout=600):
     end=time.monotonic()+timeout
@@ -124,6 +141,7 @@ def install(args):
     payload,manifest=verify_payload()
     install=Path(args.install_dir or default_install()).resolve()
     data=Path(args.data_dir or default_data()).resolve()
+    previous_control=read_control(data)
     install.mkdir(parents=True,exist_ok=True)
     if any((install/x).exists() for x in PAYLOAD_NAMES):
         write_control(data,True);wait_worker_stopped(data);time.sleep(2)
@@ -135,8 +153,7 @@ def install(args):
     (install/'enigmagrid-install.json').write_text(json.dumps({
         'product':'EnigmaVolunteerGrid','directory':str(install)}),encoding='utf-8')
     (data/'update-exit').unlink(missing_ok=True)
-    if data.exists():
-        (data/'control.json').write_text(json.dumps({'paused':False,'stop_requested':False,'check_update':False}))
+    restore_control(data,previous_control)
     if not args.no_launch:
         subprocess.Popen([str(install/"EnigmaGrid.exe")],close_fds=True)
     return install

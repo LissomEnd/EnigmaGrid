@@ -9,13 +9,14 @@ def main():
  state={'server':'https://example.invalid','device_token':'test'}
  settings={'cpu_percent':50,'gpu_percent':0,'allow_cpu':True,'allow_gpu':False}
  controls={'settings':settings,'enabled':True,'quarantined':False}
- leases=[{'id':str(i),'work_token':'test','expires_at':time.time()+900} for i in range(8)]
+ leases=[{'id':str(i),'work_token':'test','expires_at':time.time()+900} for i in range(32)]
  runtime={'_batch_requests':True};calls=[]
  def post(server,path,payload,token):
   calls.append(path)
+  if path=='/api/leases':assert payload['count']==32
   return {'leases':leases,**controls} if path=='/api/leases' else controls
  with patch.object(worker,'post',side_effect=post),patch.object(worker,'meta',return_value={}):
-  assert [worker.request_work(state,runtime)[0]['lease']['id'] for _ in range(8)]==list(map(str,range(8)))
+  assert [worker.request_work(state,runtime)[0]['lease']['id'] for _ in range(32)]==list(map(str,range(32)))
   assert calls==['/api/leases']
   worker.request_work(state,runtime)
   runtime['_batch_controls_at']=0
@@ -55,8 +56,20 @@ def main():
   except urllib.error.HTTPError as error:assert error.code==503
   else:raise AssertionError('Server failure hidden')
  assert runtime['_batch_requests']
- # Exercise the complete worker loop: eight completions, one allocation request,
- # durable outbox drained, then an explicit stop with no additional allocation.
+ # Refilling must overlap uploads without recomputing replayed leases, including
+ # acknowledgements arriving while the server's batch response is in flight.
+ with tempfile.TemporaryDirectory() as tmp:
+  q=worker.result_outbox(Path(tmp)/'client.json',{**state,'device_id':'test'})
+  q.append({'lease_id':'0','work_token':'test','result':{}})
+  runtime={'_batch_requests':True,'_uploader':SimpleNamespace(queue=q)}
+  def replay_during_ack(server,path,payload,token):
+   q.acknowledge('0')
+   return {'leases':leases,**controls}
+  with patch.object(worker,'post',side_effect=replay_during_ack),patch.object(worker,'meta',return_value={}):
+   assert worker.request_work(state,runtime)[0]['lease']['id']=='1'
+   assert all(item['id']!='0' for item in runtime['_lease_queue'])
+ # Exercise the complete worker loop: 32 completions and one overlapping refill,
+ # durable outbox drained, then an explicit stop without replaying completed work.
  with tempfile.TemporaryDirectory() as tmp:
   complete=[];allocated=[]
   full=[{**l,'engine':'bounded_crib_v1','resource_class':'cpu','resource_percent':50,
@@ -67,12 +80,13 @@ def main():
    return controls
   path=Path(tmp)/'client.json'
   with patch.object(worker,'post',side_effect=transport),patch.object(worker,'meta',return_value={}), \
+       patch.object(worker,'get_json',return_value={}), \
        patch.object(worker,'UpdateManager',None),patch.object(worker,'acquire_worker_mutex',return_value=True), \
        patch.object(worker,'publish_health'),patch.object(worker,'apply_cpu_limit',return_value=2), \
        patch.object(worker,'execute',return_value=({'receipt':'test'},1)), \
-       patch.object(worker,'read_control',side_effect=lambda p:dict(stop_requested=len(complete)==8,paused=False,check_update=False)):
+       patch.object(worker,'read_control',side_effect=lambda p:dict(stop_requested=len(complete)==32,paused=False,check_update=False)):
    assert worker.work(SimpleNamespace(state=str(path),once=False,idle_seconds=1),{**state,'device_id':'test'})==0
-  assert complete==list(map(str,range(8))) and len(allocated)==1
+  assert complete==list(map(str,range(32))) and len(allocated)==2
   assert not worker.pending_path(path).exists()
  print('PASS bounded batch consumption, controls refresh, revocation, malformed batches, legacy fallback')
 

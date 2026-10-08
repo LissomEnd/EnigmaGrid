@@ -1,8 +1,31 @@
 """Bounded public work envelope. Capability is enabled only by integrated clients."""
 from search.crib_pilot import execute, validate_job
 from search.bounded_crib import digest
+from functools import lru_cache
+import json
 
 CAPABILITY = 'bounded_crib_v1'
+
+
+@lru_cache(maxsize=128)
+def _receipt_core_json(indices):
+    """Cache only deterministic assigned cores, never a validation decision.
+
+    Intake and promotion inspect the same unit repeatedly. Immutable serialized
+    values keep callers from changing cached scope data; the bounded cache holds
+    at most two full transport batches of core sets.
+    """
+    from dataclasses import asdict
+    from search.crib_pilot import core_at
+    cores = {}
+    for index in indices:
+        # Indexed cores already have AA in the two normalized ring positions
+        # and an empty plugboard. Re-normalizing constructs and validates a
+        # second identical Key for each core; candidate keys still require the
+        # general normalization below when checking domain membership.
+        core = asdict(core_at(index))
+        cores[digest(core)] = core
+    return json.dumps(cores, sort_keys=True, separators=(',', ':'))
 
 
 def validate_envelope(lease):
@@ -87,7 +110,7 @@ def validate_receipt_shape(lease, supplied):
             'core_count','visited_cores','nodes','candidates','budgets','model','index','crib','offset','pairs'}
     if not isinstance(r,dict) or set(r)!=fields:
         raise ValueError('Invalid receipt fields')
-    cores={digest(asdict(k)):asdict(k) for i in job['core_indices'] for k in [normalize(core_at(i))]}
+    cores=json.loads(_receipt_core_json(tuple(job['core_indices'])))
     scope=dict(engine=CAPABILITY,ciphertext=job['ciphertext'],crib=job['crib'],offset=job['offset'],
                model='clean',index=None,pairs=job['pairs'],cores=[cores[h] for h in sorted(cores)])
     fixed=dict(engine=CAPABILITY,scope_hash=digest(scope),cipher_sha256=sha256(job['ciphertext'].encode()).hexdigest(),

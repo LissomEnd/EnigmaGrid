@@ -23,6 +23,11 @@ def fake_run(lease,checkpoint):
     return {'receipt':{'candidates':[]}}
 module=types.ModuleType('search.crib_work');module.run=fake_run
 namespace={'time':clock,'read_control':control,'publish_health':lambda runtime,status:writes.append((clock.now,runtime.get('progress')))}
+def gate(runtime,path):
+    ctl=namespace['read_control'](path)
+    if ctl.get('stop_requested'): raise InterruptedError('Stopped')
+    return ctl
+namespace['cooperative_gate']=gate
 exec(compile(ast.Module(body=[fn],type_ignores=[]),'<worker function>','exec'),namespace)
 with patch.dict(sys.modules,{'search':types.ModuleType('search'),'search.crib_work':module}):
     runtime={'settings':{'allow_cpu':True,'cpu_percent':100}}

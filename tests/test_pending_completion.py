@@ -13,7 +13,8 @@ def main():
     payload=dict(lease_id=42,work_token='test-work',result={'receipt':'canonical'})
     with tempfile.TemporaryDirectory() as tmp:
         path=Path(tmp)/'state.json'
-        worker.persist_completion(path,state,payload)
+        # Existing installations may have the old single-result format.
+        worker.save_state(worker.pending_path(path),{'server':state['server'],'device_id':state['device_id'],'payload':payload})
         saved=worker.pending_path(path)
         assert saved.exists()
         try:worker.persist_completion(path,state,{'lease_id':43})
@@ -23,7 +24,7 @@ def main():
             try:worker.deliver_pending(path,state)
             except TimeoutError:pass
             else:raise AssertionError('Expected network failure')
-        assert worker.load_state(saved)['payload']==payload
+        assert worker.result_outbox(path,state).pending()==[payload]
         with patch.object(worker,'post') as post:
             for changed in ({**state,'device_id':'other'},{**state,'server':'https://other.invalid'}):
                 try:worker.deliver_pending(path,changed)
