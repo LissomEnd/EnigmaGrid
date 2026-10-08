@@ -53,11 +53,30 @@ try:
                 time.sleep(.05)
             paused_calls=dict(calls);time.sleep(.35)
             assert calls==paused_calls,'computation continued while paused'
-            worker.write_control(state,{'paused':False,'stop_requested':True})
+            worker.write_control(state,{'paused':False,'stop_requested':False})
             thread.join(30)
-            assert not thread.is_alive(), 'safe stop failed to finish current job'
+            assert not thread.is_alive(), 'resume failed to finish current job'
             assert not errors,errors
             assert result==[outputs[0]]
+            assert not worker.read_control(state)['stop_requested']
+            # An explicit stop cancels at the next checkpoint; it must not resume
+            # computation or manufacture a completed receipt from partial work.
+            result.clear();errors.clear()
+            worker.write_control(state,{'paused':True,'stop_requested':False})
+            runtime.pop('status',None)
+            thread=threading.Thread(target=run,daemon=True);thread.start()
+            deadline=time.monotonic()+30
+            while runtime.get('status')!='paused':
+                assert thread.is_alive(),errors
+                assert time.monotonic()<deadline,'second pause checkpoint not reached'
+                time.sleep(.05)
+            stopped_calls=dict(calls)
+            worker.write_control(state,{'paused':False,'stop_requested':True})
+            thread.join(30)
+            assert not thread.is_alive(),'stop failed to cancel paused work'
+            assert len(errors)==1 and isinstance(errors[0],InterruptedError),errors
+            assert result==[],result
+            assert calls==stopped_calls,'computation continued after stop'
             assert worker.read_control(state)['stop_requested']
         finally:
             worker.write_control(state,{'paused':False,'stop_requested':True})
@@ -65,4 +84,4 @@ try:
 finally:
     portable_search.score_cpu=original
     worker._GPU_SCORERS=[]
-print('WORKER_CONTROLS_OK: routing, deterministic results, pause, resume-to-safe-stop')
+print('WORKER_CONTROLS_OK: routing, deterministic results, pause/resume, checkpoint cancellation without partial receipt')
