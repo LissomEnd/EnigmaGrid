@@ -36,8 +36,11 @@ jobs:
         run: |
           ./scripts/Build-WindowsStandalone.ps1
           Copy-Item dist/enigma-volunteer-windows-candidate.zip dist/enigma-volunteer-windows.zip
-      - name: Test frozen worker and tray
-        run: python tests/test_frozen_candidate.py
+      # The full HTTP/consensus test uses private coordinator policy modules,
+      # which are deliberately not shipped in this public source repository.
+      # This job can attest a candidate client package, NOT certify a production release.
+      - name: Test frozen worker and tray (offline public smoke)
+        run: python tests/test_frozen_candidate_smoke.py
       - name: Test installer lifecycle
         run: python tests/test_installer_local.py
       - name: Attest worker update package

@@ -31,7 +31,9 @@ try:
         calls.update(cpu=0,gpu=0)
         runtime={'settings':worker.normalize_settings({'cpu_percent':cpu,'gpu_percent':gpu})}
         outputs.append(worker.run_portable(lease,runtime)[0])
-        assert bool(calls['cpu'])==bool(cpu),calls
+        # A tiny one-cohort job is indivisible; GPU owns it exclusively when
+        # enabled, while full-size jobs use independent CPU/GPU lanes.
+        assert bool(calls['cpu'])==bool(cpu and not gpu),calls
         assert bool(calls['gpu'])==bool(gpu),calls
         assert runtime['progress']==1
     assert outputs[0]==outputs[1]==outputs[2]
@@ -63,6 +65,13 @@ try:
             # computation or manufacture a completed receipt from partial work.
             result.clear();errors.clear()
             worker.write_control(state,{'paused':True,'stop_requested':False})
+            # The worker intentionally shares a successful control-file read
+            # for at most 50 ms. The preceding unpaused job can finish inside
+            # that window, so wait only for its measured cache deadline before
+            # asserting that a new tiny job observes the external pause.
+            cached=runtime.get('_control_snapshot')
+            if cached is not None:
+                time.sleep(max(0,cached[1]+.051-time.monotonic()))
             runtime.pop('status',None)
             thread=threading.Thread(target=run,daemon=True);thread.start()
             deadline=time.monotonic()+30

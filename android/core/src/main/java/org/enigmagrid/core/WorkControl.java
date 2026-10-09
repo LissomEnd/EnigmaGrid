@@ -12,12 +12,16 @@ public final class WorkControl implements BooleanSupplier {
     }
     private final Timing timing;
     private final Supplier<String> restriction;
+    private CpuBudget aggregate;
     private volatile boolean stopped,paused;
     private volatile int percent=25;
     private volatile String status="ready";
     private static final class Slice {long sliceStart=-1,restUntil;}
     private final ThreadLocal<Slice> slices=ThreadLocal.withInitial(Slice::new);
     public WorkControl(Timing timing,Supplier<String> restriction){this.timing=timing;this.restriction=restriction;}
+    public WorkControl(Timing timing,Supplier<String> restriction,java.util.function.LongSupplier cpuNanos,int cores){
+        this(timing,restriction);aggregate=new CpuBudget(cpuNanos,cores);
+    }
     public void setPercent(int percent){if(percent<1||percent>100)throw new IllegalArgumentException("CPU duty must be 1..100");this.percent=percent;}
     public void pause(){paused=true;}
     public void resume(){paused=false;}
@@ -30,6 +34,12 @@ public final class WorkControl implements BooleanSupplier {
             String reason=restriction.get();
             if(paused||reason!=null){status=paused?"paused":reason;slice.sliceStart=-1;slice.restUntil=0;if(!sleep(100))return true;continue;}
             long now=timing.nanos();
+            if(aggregate!=null){
+                long delay=aggregate.delayMillis(now,percent);
+                if(delay>0){status="CPU quota rest";if(!sleep(delay))return true;continue;}
+                status="computing";return false;
+            }
+            if(percent==100){slice.sliceStart=now;slice.restUntil=0;status="computing";return false;}
             if(slice.restUntil>now){status="CPU duty rest";if(!sleep(Math.max(1,Math.min(100,(slice.restUntil-now+999999)/1000000))))return true;continue;}
             if(slice.sliceStart<0){slice.sliceStart=now;status="computing";return false;}
             long elapsed=now-slice.sliceStart;

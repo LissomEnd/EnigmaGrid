@@ -3,6 +3,7 @@ import ctypes
 import hashlib
 import ipaddress
 import json
+import multiprocessing
 import os
 import re
 import subprocess
@@ -68,7 +69,7 @@ def save_json(path,obj):
     tmp.write_text(json.dumps(obj,indent=2),encoding="utf-8")
     tmp.replace(path)
 
-def prompt_update(version,mandatory,notes):
+def _message_box_update(version,mandatory,notes):
     if os.name!="nt":return False
     title="Enigma Volunteer Grid update"
     if mandatory:
@@ -79,6 +80,54 @@ def prompt_update(version,mandatory,notes):
         msg+="\n\n"+str(notes)[:900]
     MB_YESNO=0x4;MB_ICONINFORMATION=0x40;MB_SETFOREGROUND=0x10000
     return ctypes.windll.user32.MessageBoxW(None,msg,title,MB_YESNO|MB_ICONINFORMATION|MB_SETFOREGROUND)==6
+
+def _prompt_child(send,version,mandatory,notes):
+    try:
+        send.send(("ok",_message_box_update(version,mandatory,notes)))
+    except BaseException as error:
+        try:send.send(("error",type(error).__name__))
+        except (OSError,EOFError):pass
+    finally:
+        send.close()
+
+def _await_owned_prompt(child,receive,stop_event):
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                raise InterruptedError("Update prompt cancelled")
+            if receive.poll(.1):
+                try:status,value=receive.recv()
+                except EOFError:raise RuntimeError("Update prompt closed without a result")
+                if status!="ok":raise RuntimeError("Update prompt failed: "+str(value))
+                return bool(value)
+            if not child.is_alive():
+                raise RuntimeError("Update prompt exited without a result")
+    finally:
+        # This handle is the exact process created above, never a searched
+        # application PID or another user's window.
+        child.join(.5)
+        if child.is_alive():
+            child.terminate();child.join(3)
+        if child.is_alive():
+            child.kill();child.join(3)
+        receive.close()
+
+def prompt_update(version,mandatory,notes,stop_event=None):
+    """Ask in an owned child so a safe stop can close only this dialog."""
+    if os.name!="nt":return False
+    if stop_event is not None and stop_event.is_set():
+        raise InterruptedError("Update prompt cancelled")
+    context=multiprocessing.get_context("spawn")
+    receive,send=context.Pipe(duplex=False)
+    child=context.Process(target=_prompt_child,args=(send,version,mandatory,notes),
+                          daemon=True,name="enigmagrid-update-prompt")
+    try:
+        child.start()
+    except BaseException:
+        receive.close();send.close()
+        raise
+    send.close()
+    return _await_owned_prompt(child,receive,stop_event)
 
 def manifest_is_mandatory(manifest,current):
     if bool(manifest.get("mandatory",False)):return True
@@ -107,10 +156,19 @@ class UpdateManager:
 
     def start(self):
         if self.thread and self.thread.is_alive():return
-        self.thread=threading.Thread(target=self._loop,name="update-checker",daemon=True)
+        self.thread=threading.Thread(target=self._loop,name="update-checker")
         self.thread.start()
     def shutdown(self):
         self.stop_event.set();self.wake.set()
+        if self.thread is not None and self.thread.ident is not None:
+            # One in-flight asset read has a 60-second socket timeout. The
+            # prompt is cancellable independently and should finish promptly.
+            self.thread.join(timeout=65)
+            if self.thread.is_alive():
+                raise RuntimeError('Update checker did not terminate')
+
+    def _check_stop(self):
+        if self.stop_event.is_set():raise InterruptedError('Update checker stopping')
 
     def report(self,status,message):
         save_json(self.status_path,{"status":status,"message":message,"checked_at":time.time(),"current_version":self.current_version})
@@ -134,16 +192,19 @@ class UpdateManager:
                     self.check_once()
                     self.last_error=None
                 except Exception as e:
+                    if self.stop_event.is_set():return
                     self.last_error=repr(e)
                     self.report("error","Could not check or verify the update. Check your connection and retry. Your current installation is unchanged.")
                 next_check=time.monotonic()+max(900,int(self.cfg.get("check_interval_seconds",21600)))
             self.stop_event.wait(1)
 
     def resolve_repo(self):
+        self._check_stop()
         repo=str(self.cfg.get("github_repo","")).strip()
         if not repo:
             url=self.server_url.rstrip("/")+"/api/public/config"
             public=fetch_json(url,15)
+            self._check_stop()
             repo=str(public.get("github_repo","")).strip()
         if not repo:return ""
         if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",repo):
@@ -152,18 +213,57 @@ class UpdateManager:
 
     def _release(self):
         repo=self.resolve_repo()
+        self._check_stop()
         if not repo:return None
-        url=f"https://api.github.com/repos/{repo}/releases/latest"
-        rel=fetch_json(url,30)
-        if rel.get("draft") or rel.get("prerelease"):return None
-        return rel
+        base=f"https://api.github.com/repos/{repo}/releases"
+        required={self.cfg.get("manifest_name","update-manifest.json"),
+                  self.cfg.get("signature_name","update-manifest.sig"),
+                  self.cfg.get("asset_name","enigma-volunteer-windows.zip")}
+        if len(required)!=3 or any(not isinstance(name,str) or not name or Path(name).name!=name for name in required):
+            raise ValueError("invalid_update_asset_config")
+
+        def windows_release(rel):
+            if not isinstance(rel,dict) or rel.get("draft") is not False or rel.get("prerelease") is not False:
+                return False
+            if not re.fullmatch(r"v?\d+\.\d+\.\d+",str(rel.get("tag_name",""))):return False
+            assets=rel.get("assets")
+            if not isinstance(assets,list):return False
+            found=set()
+            for asset in assets:
+                if not isinstance(asset,dict):continue
+                name=asset.get("name")
+                if isinstance(name,str) and name in required:
+                    url=asset.get("browser_download_url")
+                    try:asset_url_ok=isinstance(url,str) and valid_https(url,"github.com")
+                    except ValueError:asset_url_ok=False
+                    if name in found or not asset_url_ok:
+                        return False
+                    found.add(name)
+            return found==required
+
+        self._check_stop()
+        latest=fetch_json(base+"/latest",30)
+        self._check_stop()
+        if windows_release(latest) and version_tuple(latest["tag_name"])>version_tuple(self.current_version):
+            return latest
+        # GitHub's latest release may be an Android-only package. Inspect one
+        # bounded page and choose the highest stable Windows version, not the
+        # first release by creation date. The signed manifest remains authoritative.
+        listed=fetch_json(base+"?per_page=100&page=1",30)
+        self._check_stop()
+        if isinstance(listed,list):
+            matches=[rel for rel in listed[:100] if windows_release(rel)]
+            if matches:return max(matches,key=lambda rel:version_tuple(rel["tag_name"]))
+        return latest if windows_release(latest) else None
 
     def check_once(self):
+        self._check_stop()
         if self.apply_requested:
             self.report("ready","A verified update is ready. Installation will start after the current job finishes.")
             return self.pending
         self.report("checking","Checking GitHub for a signed update...")
         rel=self._release()
+        self._check_stop()
         if not rel:
             self.report("error","Update source unavailable. Please retry later.")
             return None
@@ -175,7 +275,10 @@ class UpdateManager:
         surl=assets[sn].get("browser_download_url","")
         if not valid_https(murl,"github.com") or not valid_https(surl,"github.com"):
             raise ValueError("invalid_manifest_asset_url")
-        mdata=fetch_bytes(murl,30);sig=fetch_bytes(surl,30).decode("ascii").strip()
+        mdata=fetch_bytes(murl,30)
+        self._check_stop()
+        sig=fetch_bytes(surl,30).decode("ascii").strip()
+        self._check_stop()
         verify_manifest(mdata,sig)
         manifest=json.loads(mdata.decode("utf-8"))
         if int(manifest.get("schema",0))!=1:raise ValueError("unsupported_update_schema")
@@ -191,7 +294,9 @@ class UpdateManager:
             self.report("available",f"Version {version} is available. Choose Check for updates to review it again.")
             return None
         self.report("available",f"Version {version} is available. Choose Yes or No in the update window.")
-        accepted=prompt_update(version,mandatory,manifest.get("notes",""))
+        self._check_stop()
+        accepted=prompt_update(version,mandatory,manifest.get("notes",""),self.stop_event)
+        self._check_stop()
         if not accepted:
             if mandatory:
                 with self.lock:self.stop_requested=True
@@ -202,6 +307,7 @@ class UpdateManager:
             return {"version":version,"accepted":False,"mandatory":mandatory}
         self.report("downloading",f"Downloading version {version} and verifying its signature. You can continue contributing.")
         staged=self._download_asset(rel,manifest,mdata,sig)
+        self._check_stop()
         with self.lock:
             self.pending=staged
             self.apply_requested=True
@@ -228,6 +334,7 @@ class UpdateManager:
         h=hashlib.sha256();size=0
         with urllib.request.urlopen(req,timeout=60) as r,open(tmp,"wb") as f:  # nosec B310
             while True:
+                self._check_stop()
                 block=r.read(1024*1024)
                 if not block:break
                 size+=len(block)

@@ -87,12 +87,23 @@ jobs:
         shell: pwsh
         run: |
           $tests = @(
-            'test_block_queue.py', 'test_block_pipeline.py', 'test_block_persistence_overlap.py',
-            'test_block_control_lifecycle.py', 'test_work_blocks.py', 'test_work_result_groups.py',
+            'test_block_queue.py', 'test_block_pipeline.py', 'test_block_initial_fill.py',
+            'test_bounded_ack_telemetry.py',
+            'test_owned_shutdown.py', 'test_opencl_shutdown.py',
+            'test_native_close_abi.py', 'test_native_close_lifecycle.py',
+            'test_block_persistence_overlap.py',
+            'test_block_gpu_lane.py', 'test_gpu_lane_qualification.py', 'test_worker_gpu_lane_profile.py',
+            'test_block_control_lifecycle.py', 'test_block_deadlines.py',
+            'test_block_async_qualification.py', 'test_worker_concurrency_qualification.py',
+            'test_concurrent_process_maps.py',
+            'test_work_blocks.py', 'test_work_result_groups.py',
             'test_receipt_outbox.py', 'test_completion_transport.py', 'test_cpu_budget.py',
+            'test_acknowledged_lease_replay.py', 'test_device_telemetry.py',
             'test_vulkan_bounded_adapter.py', 'test_bounded_gpu_qualification.py',
             'test_worker_gpu_qualification_control.py', 'test_worker_hybrid_routing.py',
-            'test_thermal_legacy_controls.py', 'test_installer_controls.py',
+            'test_worker_shared_constrained.py',
+            'test_thermal_legacy_controls.py', 'test_worker_control_snapshot.py',
+            'test_worker_bounded_memory_policy.py', 'test_installer_controls.py',
             'test_summary_cache.py', 'test_monitor_navigation.py', 'test_worker_throughput.py'
           )
           foreach ($test in $tests) {
@@ -113,12 +124,29 @@ jobs:
         run: python tests/test_cleanup_safety.py
       - name: Shared proxy rate limits
         run: python tests/test_rate_limits.py
+      - name: Public leaderboard enrollment consent
+        run: python tests/test_public_credit_default.py
       - name: HTTP integration test
         run: python tests/test_http_integration_v3.py
       - name: Public surface test
         run: python tests/test_public_surface_v3.py
       - name: Portable search determinism
-        run: python tests/test_portable_search.py
+        shell: pwsh
+        run: |
+          python tests/test_portable_search.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_portable_cohort_parity.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_portable_batch_stage.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_owned_process_termination.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_portable_legacy_telemetry.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_windows_portable_lanes.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_windows_gpu_telemetry.py
+          exit $LASTEXITCODE
       - name: Worker resource and pause controls
         run: python tests/test_worker_controls.py
       - name: Client summary hardware provenance
@@ -128,7 +156,12 @@ jobs:
       - name: Windows state file lock recovery
         run: python tests/test_state_file_locks.py
       - name: Update signature and mandatory policy
-        run: python tests/test_update_integrity.py
+        shell: pwsh
+        run: |
+          python tests/test_update_integrity.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/test_update_release_selection.py
+          exit $LASTEXITCODE
       - name: Conservative update package retention
         run: python tests/test_update_package_retention.py
       - name: Update feedback and manual retry
@@ -138,6 +171,8 @@ jobs:
         run: |
           $jdk = $env:JAVA_HOME_17_X64
           if (-not $jdk) { throw 'Java 17 is required for Android host checks' }
+          python android/core/qualify_background_execution.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_resume.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_resource_guard.py --jdk "$jdk"
@@ -151,4 +186,6 @@ jobs:
           python tests/test_constrained_telemetry.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_network_cycle.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python android/core/qualify_work_blocks.py --jdk "$jdk"
           exit $LASTEXITCODE

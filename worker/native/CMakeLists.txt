@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(enigmagrid_solver LANGUAGES CXX)
 find_package(Vulkan REQUIRED)
-add_library(enigmagrid_solver SHARED ../../android/app/src/main/cpp/vulkan_solver.cpp)
+add_library(enigmagrid_solver SHARED vulkan_solver_windows.cpp)
 target_compile_features(enigmagrid_solver PRIVATE cxx_std_17)
 target_compile_definitions(enigmagrid_solver PRIVATE ENIGMAGRID_NO_JNI)
 target_link_libraries(enigmagrid_solver PRIVATE Vulkan::Vulkan)

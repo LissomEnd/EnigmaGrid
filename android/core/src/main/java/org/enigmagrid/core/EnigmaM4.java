@@ -27,28 +27,39 @@ public final class EnigmaM4 {
             if (i < 8) NOTCHES.put(names[i], notches[i]);
         }
     }
+    private static final String[] ROW_NAMES={"I","II","III","IV","V","VI","VII","VIII","Beta","Gamma","Bthin","Cthin"};
+    private static final java.util.List<String> ROW_IDS=java.util.Arrays.asList(ROW_NAMES);
+    private static final int[] ROW_TABLES=new int[624];
+    static {
+        for(int i=0;i<12;i++)for(int x=0;x<26;x++){
+            ROW_TABLES[i*26+x]=FORWARD.get(ROW_NAMES[i])[x];
+            ROW_TABLES[312+i*26+x]=REVERSE.get(ROW_NAMES[i])[x];
+        }
+    }
+    static void copyRowTables(int[] target){System.arraycopy(ROW_TABLES,0,target,1,ROW_TABLES.length);}
     private EnigmaM4() {}
     /** Packed Vulkan row inputs; mechanical stepping stays shared with the reference. */
     public static int[] rowInputs(String reflector,String greek,String[] moving,String positions,String rings,int offset,int length) {
         if(offset<0||length<1||offset+length>72)throw new IllegalArgumentException("Invalid row interval");
-        // Reuse strict key validation before table lookup.
+        int[] result=new int[625+length*9];result[0]=length;copyRowTables(result);
+        writeRowInputs(result,625,reflector,greek,moving,positions,rings,offset,length);
+        return result;
+    }
+    static void writeRowInputs(int[] result,int destination,String reflector,String greek,String[] moving,String positions,String rings,int offset,int length) {
+        if(offset<0||length<1||offset+length>72||destination<0||destination>result.length-length*9)throw new IllegalArgumentException("Invalid row interval");
         crypt("A",reflector,greek,moving,positions,rings,new String[0]);
-        String[] names={"I","II","III","IV","V","VI","VII","VIII","Beta","Gamma","Bthin","Cthin"};
-        java.util.List<String> ids=java.util.Arrays.asList(names);
-        int[] result=new int[625+length*9];result[0]=length;
-        for(int i=0;i<12;i++)for(int x=0;x<26;x++){result[1+i*26+x]=FORWARD.get(names[i])[x];result[313+i*26+x]=REVERSE.get(names[i])[x];}
         int[] p=letters(positions,4),r=letters(rings,4);
-        String[] rotors={greek,moving[0],moving[1],moving[2]};
+        int[] rotorIds={ROW_IDS.indexOf(greek),ROW_IDS.indexOf(moving[0]),ROW_IDS.indexOf(moving[1]),ROW_IDS.indexOf(moving[2])};
+        int reflectorId=ROW_IDS.indexOf(reflector);
         for(int slot=0;slot<offset+length;slot++) {
             boolean middle=NOTCHES.get(moving[1]).indexOf('A'+p[2])>=0;
             boolean right=NOTCHES.get(moving[2]).indexOf('A'+p[3])>=0;
             if(middle)p[1]=mod(p[1]+1);if(middle||right)p[2]=mod(p[2]+1);p[3]=mod(p[3]+1);
             if(slot<offset)continue;
-            int base=625+(slot-offset)*9;
-            for(int j=0;j<4;j++){result[base+j]=ids.indexOf(rotors[j]);result[base+5+j]=mod(p[j]-r[j]);}
-            result[base+4]=ids.indexOf(reflector);
+            int base=destination+(slot-offset)*9;
+            for(int j=0;j<4;j++){result[base+j]=rotorIds[j];result[base+5+j]=mod(p[j]-r[j]);}
+            result[base+4]=reflectorId;
         }
-        return result;
     }
     /** Evaluate all contacts after stepping once per position, without 26 full decryptions. */
     public static int[][] rows(String reflector,String greek,String[] moving,String positions,String rings,int offset,int length) {

@@ -16,13 +16,13 @@ def hardware_fingerprint():
     if not devices:raise ValueError('GPU inventory unavailable')
     return hashlib.sha256(json.dumps([machine,platform.platform(),platform.processor(),devices],sort_keys=True).encode()).hexdigest()
 
-def load_qualification(record,library,shader,fingerprint,*,adapter,factory=None):
+def _load_checked(record,library,shader,fingerprint,*,adapter,factory=None,require_speed=True):
     data=json.loads(Path(record).read_text(encoding='utf-8'))
     if data.get('format')!=FORMAT or data.get('hardware')!=fingerprint:return None
     if data.get('library_sha256')!=sha256(library) or data.get('shader_sha256')!=sha256(shader) or data.get('adapter_sha256')!=sha256(adapter):return None
     if data.get('parity_passed') is not True or type(data.get('core_checks')) is not int or data['core_checks']<657:return None
     workers=data.get('cpu_workers');gpu=data.get('gpu_cores')
-    if type(workers) is not int or not 1<=workers<=8 or type(gpu) is not int or not 1<=gpu<=128:return None
+    if type(workers) is not int or not 1<=workers<=32 or type(gpu) is not int or not 1<=gpu<=128:return None
     scope=data.get('scope')
     if scope!=[128,24,'clean',10,5000,64,256]:return None
     trials=data.get('warm_trials')
@@ -32,11 +32,25 @@ def load_qualification(record,library,shader,fingerprint,*,adapter,factory=None)
         if type(trial.get('domain_start')) is not int or trial['domain_start']!=(index+3)*128:return None
         cpu,hybrid=trial.get('cpu_seconds'),trial.get('hybrid_seconds')
         if any(type(v) not in (int,float) or not math.isfinite(v) or v<=0 for v in (cpu,hybrid)):return None
-        if hybrid>cpu*.95:return None
+        if require_speed and hybrid>cpu*.95:return None
     if factory is None:
         from search.vulkan_bounded import NativeSolver
         factory=NativeSolver
     return dict(qualified=True,cpu_workers=workers,gpu_cores=gpu,scope=tuple(scope),dispatch=factory(library,shader))
+
+
+def load_qualification(record,library,shader,fingerprint,*,adapter,factory=None):
+    return _load_checked(record,library,shader,fingerprint,adapter=adapter,factory=factory)
+
+
+def load_parity(record,library,shader,fingerprint,*,adapter,factory=None):
+    """Load exact native parity despite a failed intra-job speed comparison.
+
+    This is only a prerequisite for a separate aggregate-throughput proof.
+    It must never activate GPU production work by itself.
+    """
+    return _load_checked(record,library,shader,fingerprint,adapter=adapter,
+                         factory=factory,require_speed=False)
 
 
 def qualify(library,shader,adapter,workers,*,checkpoint=lambda:None):
@@ -48,7 +62,7 @@ def qualify(library,shader,adapter,workers,*,checkpoint=lambda:None):
     from search.c3_models import solve_board
     from search.crib_work import run
     from search.process_map import OrderedProcessMap
-    if type(workers) is not int or not 1<=workers<=8:raise ValueError('Invalid CPU worker count')
+    if type(workers) is not int or not 1<=workers<=32:raise ValueError('Invalid CPU worker count')
     checkpoint()
     native=NativeSolver(library,shader)
     report=dict(format=FORMAT,hardware=hardware_fingerprint(),

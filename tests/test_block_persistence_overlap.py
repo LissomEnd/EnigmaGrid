@@ -25,7 +25,7 @@ for lanes in (1,2,4):
             entered.set();assert release.wait(5),'Test did not unblock storage'
         worker.save_state(destination,value)
     q=BlockQueue(path,owner,worker.load_state,save,grouped=True)
-    q.add(block);second=copy.deepcopy(block);second['block_id']='next';q.add(second)
+    q.add(block,valid_for_seconds=7200);second=copy.deepcopy(block);second['block_id']='next';q.add(second,valid_for_seconds=7200)
     lock=threading.Lock()
     def compute(envelope):
         result=run(envelope)
@@ -47,6 +47,7 @@ for lanes in (1,2,4):
     finally:release.set();closer.shutdown(wait=True)
     recovered=BlockQueue(path,owner,worker.load_state,worker.save_state,grouped=True)
     assert sorted(x['unit'] for x in recovered.pending())==list(range(2*lanes))
+    recovered.update_status({identity:dict(status='reserved',valid_for_seconds=7200) for identity in recovered.identities()})
     assert recovered.claim_next(lanes)[1]['start_unit']==2*lanes
     assert not q.claims and q.reserved_bytes==0
 print('PASS 1/2/4 physical lanes compute a bounded second job during blocked storage; stop flushes every result')
@@ -60,7 +61,7 @@ for failure_type in (OSError,RuntimeError):
             raise failure_type('Injected persistence failure')
         worker.save_state(destination,value)
     q=BlockQueue(path,owner,worker.load_state,failed_save,grouped=True)
-    q.add(block);second=copy.deepcopy(block);second['block_id']='next';q.add(second)
+    q.add(block,valid_for_seconds=7200);second=copy.deepcopy(block);second['block_id']='next';q.add(second,valid_for_seconds=7200)
     def compute(envelope):
         result=run(envelope);count.append(envelope['start_unit'])
         if len(count)==2:computed.set()
@@ -72,6 +73,7 @@ for failure_type in (OSError,RuntimeError):
     except failure_type:pass
     else:raise AssertionError('Persistence failure concealed on close')
     recovered=BlockQueue(path,owner,worker.load_state,worker.save_state)
+    recovered.update_status({identity:dict(status='reserved',valid_for_seconds=7200) for identity in recovered.identities()})
     assert not recovered.pending() and recovered.next_unit()[1]['start_unit']==0
     assert not q.claims and q.reserved_bytes==0
 print('PASS storage failures propagate on close and restart replays unsaved units')
@@ -79,7 +81,7 @@ print('PASS storage failures propagate on close and restart replays unsaved unit
 with tempfile.TemporaryDirectory() as folder:
  path=Path(folder)/'queue';writes=[]
  def save(destination,value):worker.save_state(destination,value);writes.append(1)
- q=BlockQueue(path,owner,worker.load_state,save,grouped=True);q.add(block)
+ q=BlockQueue(path,owner,worker.load_state,save,grouped=True);q.add(block,valid_for_seconds=7200)
  claims=[q.claim_prefetched(2) for _ in range(4)]
  assert [x[1]['start_unit'] for x in claims]==[0,1,2,3] and q.claim_prefetched(2) is None
  values=[(key,e['start_unit'],run(e),.1) for key,e in claims]
@@ -92,6 +94,7 @@ with tempfile.TemporaryDirectory() as folder:
  q.complete_batch(list(reversed(values)))
  assert len(writes)==number+1 and not q.claims and q.reserved_bytes==0
  recovered=BlockQueue(path,owner,worker.load_state,worker.save_state,grouped=True)
+ recovered.update_status({identity:dict(status='reserved',valid_for_seconds=7200) for identity in recovered.identities()})
  assert len(recovered.pending())==4 and recovered.next_unit()[1]['start_unit']==4
  assert worker.load_state(path)['version']==1
 print('PASS completion batch validates all rows before one atomic cursor/receipt save')

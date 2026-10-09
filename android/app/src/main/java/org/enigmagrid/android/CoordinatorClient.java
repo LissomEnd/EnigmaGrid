@@ -9,7 +9,13 @@ import org.enigmagrid.core.Canonical;
 
 /** HTTPS transport with system certificate validation and no credential redirects. */
 final class CoordinatorClient {
-    static final class HttpFailure extends IOException {final int status;HttpFailure(int status){super("Coordinator HTTP "+status);this.status=status;}}
+    static final class HttpFailure extends IOException implements org.enigmagrid.core.WorkBlockPipeline.RetryHint {
+        final int status;final long retryAfterMillis;
+        HttpFailure(int status){this(status,0);}
+        HttpFailure(int status,long retryAfterMillis){super("Coordinator HTTP "+status);this.status=status;this.retryAfterMillis=retryAfterMillis;}
+        public int status(){return status;}
+        public long retryAfterMillis(){return retryAfterMillis;}
+    }
     private final String origin;
     private final javax.net.ssl.SSLSocketFactory tls;
     private final java.util.concurrent.atomic.AtomicReference<HttpsURLConnection> active=new java.util.concurrent.atomic.AtomicReference<>();
@@ -33,22 +39,36 @@ final class CoordinatorClient {
         closer.setDaemon(true);closer.start();
     }
     synchronized Map<String,Object> request(String path,Map<String,Object> payload,String token) throws Exception {
-        if(!path.matches("/(health|api/[a-z/-]+)"))throw new IllegalArgumentException("Invalid endpoint");
+        if(!path.matches("/(health|api/[a-z0-9/-]+)"))throw new IllegalArgumentException("Invalid endpoint");
         if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
         HttpsURLConnection c=(HttpsURLConnection)new URL(origin+path).openConnection();active.set(c);
         try {
             if(tls!=null)c.setSSLSocketFactory(tls);
             c.setInstanceFollowRedirects(false);c.setConnectTimeout(15000);c.setReadTimeout(30000);
-            c.setRequestProperty("User-Agent","EnigmaGridAndroid/0.4.15");c.setRequestProperty("Accept","application/json");
+            c.setRequestProperty("User-Agent","EnigmaGridAndroid/"+BuildConfig.VERSION_NAME);c.setRequestProperty("Accept","application/json");
             if(token!=null){if(!token.matches("[A-Za-z0-9_\\-]{16,512}"))throw new IllegalArgumentException("Invalid credential format");c.setRequestProperty("X-Device-Token",token);}
             if(payload!=null) {
-                byte[] bytes=Canonical.json(payload).getBytes(StandardCharsets.UTF_8);
-                if(bytes.length>4*1024*1024)throw new IOException("Request exceeds size limit");
+                boolean blockProtocol=path.equals("/api/work-blocks")||path.startsWith("/api/work-blocks/");
+                byte[] bytes=(path.equals("/api/device/telemetry/v1")?TelemetryJson.json(payload):
+                    blockProtocol?org.enigmagrid.core.WorkBlockJson.json(payload):Canonical.json(payload)).getBytes(StandardCharsets.UTF_8);
+                int bodyLimit=path.equals("/api/device/telemetry/v1")?8192:path.equals("/api/work-blocks/result-groups")?768*1024:blockProtocol?256*1024:4*1024*1024;
+                if(bytes.length>bodyLimit)throw new IOException("Request exceeds size limit");
                 c.setRequestMethod("POST");c.setDoOutput(true);c.setFixedLengthStreamingMode(bytes.length);c.setRequestProperty("Content-Type","application/json");
                 try(OutputStream output=c.getOutputStream()){output.write(bytes);}
             }
             int code=c.getResponseCode();
-            if(code<200||code>=300)throw new HttpFailure(code);
+            if(code<200||code>=300){
+                long retry=0;
+                String header=c.getHeaderField("Retry-After");
+                if(header!=null)try{
+                    long seconds=Long.parseLong(header.trim());
+                    retry=seconds>0?Math.min(seconds,Long.MAX_VALUE/1000)*1000:0;
+                }catch(NumberFormatException invalid){
+                    try{retry=Math.max(0,c.getHeaderFieldDate("Retry-After",0)-System.currentTimeMillis());}
+                    catch(IllegalArgumentException ignored){}
+                }
+                throw new HttpFailure(code,retry);
+            }
             try(InputStream input=c.getInputStream();ByteArrayOutputStream output=new ByteArrayOutputStream()) {
                 byte[] buffer=new byte[8192];int size=0,n;
                 while((n=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();size+=n;if(size>4*1024*1024)throw new IOException("Response exceeds size limit");output.write(buffer,0,n);}

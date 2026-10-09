@@ -11,6 +11,16 @@ async function refresh(){
   if(!r.ok)throw new Error('status '+r.status);
   const s=await r.json();live(true,'Coordinator online');
   $('downloadLink').hidden=!s.registration_open;
+  const campaigns=s.campaigns||[];
+  const c4=campaigns.find(c=>c.id==='p1030680-c4-long-20261009');
+  const c3=campaigns.filter(c=>c.id==='p1030680-portable-v1'||c.id==='p1030680-c3-android-continuation'||c.id==='p1030680-c3-android-bridge-20261009');
+  const activeC3=c3.some(c=>c.status==='running');
+  const c4Running=c4&&c4.status==='running';
+  $('phaseNow').textContent=c4Running?'C4 · running':activeC3?'C3 · active search':c3.length?'C3 · '+(c3.every(c=>c.status==='complete')?'complete':'awaiting checks'):'Research in progress';
+  $('phaseNowDetail').textContent=c4Running?'Android and Windows volunteers share the same qualified bounded engine.':activeC3?'Portable and Android-compatible streams are working; all results retain independent verification requirements.':'Campaign state reported by the coordinator.';
+  $('phaseNext').textContent=!c4?'C4 · next phase':c4Running?'C4 · active':c4.status==='prepared'?'C4 · prepared': 'C4 · '+c4.status;
+  $('phaseNextDetail').textContent=c4Running?'1.3 million scheduled units across four device-compatible segments.':c4&&c4.status==='prepared'?'Automatic transition after C3 completion, pending verification checks and a valid backup.':!c4?'C4 begins after C3 completion and independent checks. Its activation state is not yet part of the public campaign feed.':'No start time is claimed until coordinator gates pass.';
+
   const researchPaused=(s.campaigns||[]).some(c=>c.status==='paused') && !(s.campaigns||[]).some(c=>c.status==='running');
   $('launchState').textContent=researchPaused?'Research validation in progress. New work is paused while the next search method is tested. Existing results and credits are preserved; no reinstall is needed.':(s.registration_open?'Public registration is open.':'Public registration is closed while the release is being prepared or maintained.');
   $('pct').textContent=(Number(s.progress_pct)||0).toFixed(3)+'%';
@@ -21,7 +31,7 @@ async function refresh(){
   const leaders=s.leaderboard||[];
   $('leaders').innerHTML=leaders.length?leaders.map(x=>'<tr><td>'+esc(x.display_name)+'</td><td>'+fmt(x.units)+'</td><td>'+fmt(x.jobs)+'</td><td>'+age(x.compute_seconds)+'</td></tr>').join(''):'<tr><td colspan="4" class="muted">No credited contributions yet.</td></tr>';
   $('campaigns').innerHTML=(s.campaigns||[]).filter(x=>x.status!=='archived').map(x=>'<div class="campaign"><div><b>'+esc(x.name)+'</b><div class="muted">'+esc(x.version)+'</div></div><div class="state">'+esc(x.status)+'</div></div>').join('');
- }catch(e){live(false,'Connection lost · figures may be outdated');$('launchState').textContent='Connection unavailable. Registration status could not be confirmed.'}
+ }catch(e){live(false,'Connection lost · figures may be outdated');$('launchState').textContent='Connection unavailable. Registration status could not be confirmed.';$('phaseNow').textContent='Status unavailable';$('phaseNowDetail').textContent='Last displayed progress may be stale.';$('phaseNext').textContent='C4 · status unavailable';}
 }
 function deviceHtml(d){
  const safeId=esc(d.id);

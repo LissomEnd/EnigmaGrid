@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 
 /** Python-compatible canonical JSON for the integer/ASCII work protocol. */
 public final class Canonical {
+    private static final char[] HEX="0123456789abcdef".toCharArray();
     private Canonical() {}
     public static String json(Object value) {
         if(value==null)return "null";
@@ -44,7 +45,12 @@ public final class Canonical {
     public static String sha256(String text) {
         try {
             byte[] bytes=MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
-            StringBuilder s=new StringBuilder();for(byte b:bytes)s.append(String.format(Locale.ROOT,"%02x",b&255));return s.toString();
+            char[] hex=new char[bytes.length*2];
+            for(int i=0;i<bytes.length;i++){
+                int b=bytes[i]&255;
+                hex[i*2]=HEX[b>>>4];hex[i*2+1]=HEX[b&15];
+            }
+            return new String(hex);
         }catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
     }
     public static String digest(Object value){return sha256(json(value));}
