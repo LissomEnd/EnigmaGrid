@@ -65,7 +65,7 @@ public final class GpuService extends Service {
                 Message rejected=Message.obtain(null,1,id,0);Bundle info=new Bundle();info.putString("error","GPU result transport failed");rejected.setData(info);
                 try{target.send(rejected);}catch(RemoteException ignored){}
             }
-        }finally{if(shared!=null)shared.close();}
+        }finally{GpuSharedTransport.close(shared);}
     }
     @Override public IBinder onBind(Intent intent){return endpoint.getBinder();}
     @Override public void onDestroy(){executor.shutdownNow();super.onDestroy();}

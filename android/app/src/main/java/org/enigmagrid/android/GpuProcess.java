@@ -92,7 +92,7 @@ final class GpuProcess implements AutoCloseable {
         try {
             Message request=Message.obtain(null,kind,id,0);request.replyTo=replies;Bundle data=new Bundle();
             SharedMemory shared=GpuSharedTransport.put(data,"input",input);
-            try{request.setData(data);remote.send(request);sentNs=System.nanoTime();}finally{if(shared!=null)shared.close();}
+            try{request.setData(data);remote.send(request);sentNs=System.nanoTime();}finally{GpuSharedTransport.close(shared);}
             int[] rows=result.get(6,TimeUnit.SECONDS);if(rows==null)throw new IllegalStateException("Empty GPU response");succeeded=true;return rows;
         }catch(InterruptedException e){if(sentNs!=0&&!replyObserved.get())ignored.holdUntilServiceDeadline(sentNs);Thread.currentThread().interrupt();close();throw new CancellationException();}
          catch(Exception e){if(sentNs!=0&&!replyObserved.get())ignored.holdUntilServiceDeadline(sentNs);close();throw new IllegalStateException("GPU process unavailable",e);}
