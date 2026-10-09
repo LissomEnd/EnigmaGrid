@@ -18,13 +18,13 @@ final class AccountPanel {
         this.activity=activity;store=new CredentialStore(activity.getApplicationContext());
         text(parent,"Your account",22);
         enrollment=new LinearLayout(activity);enrollment.setOrientation(LinearLayout.VERTICAL);parent.addView(enrollment);
-        text(enrollment,"Register this Android device to receive credits for verified work. Registration does not start computation. Only compatible constrained-search jobs are requested.",16);
+        text(enrollment,"Register this Android device to receive credit for accepted work. Registration does not start computation. When you contribute, private performance summaries are sent to the coordinator about every 30 seconds; no result contents or credentials are included.",16);
         SharedPreferences settings=activity.getSharedPreferences("worker-settings",0);
         EditText origin=field(enrollment,"Coordinator HTTPS address",false);origin.setText(settings.getString("server","https://enigma-grid.tail40f219.ts.net"));
         EditText name=field(enrollment,"Display name (optional)",false);
         EditText join=field(enrollment,"Existing contributor key (optional)",true);
-        text(enrollment,"Leave the contributor key empty to create a new profile. An existing key keeps that profile and its visibility settings. Public rankings include verified work only.",15);
-        CheckBox publicCredit=new CheckBox(activity);publicCredit.setText("Show my name and verified contributions in the public leaderboard");publicCredit.setTextColor(0xffe2edf2);enrollment.addView(publicCredit);
+        text(enrollment,"Leave the contributor key empty to create a new profile. An existing key keeps that profile and its visibility settings. Public rankings show credited work.",15);
+        CheckBox publicCredit=new CheckBox(activity);publicCredit.setText("Show my name and credited work in the public leaderboard");publicCredit.setTextColor(0xffe2edf2);enrollment.addView(publicCredit);
         status=text(parent,"Checking saved account...",16);
         register=new Button(activity);register.setText("Register this device");enrollment.addView(register);register.setEnabled(false);
         Button refresh=new Button(activity);refresh.setText("Refresh account status");parent.addView(refresh);refresh.setOnClickListener(v->refresh());
@@ -60,7 +60,7 @@ final class AccountPanel {
                         try{
                             Map<String,Object> profile=new CoordinatorClient((String)account.get("server")).request("/api/me",object("dashboard_token",account.get("dashboard_token")),null);
                             Object display=profile.get("display_name");
-                            String visibility=Boolean.TRUE.equals(profile.get("public_credit"))?"Public leaderboard: visible after verified work.":"Public leaderboard: hidden (private profile).";
+                            String visibility=Boolean.TRUE.equals(profile.get("public_credit"))?"Public leaderboard: visible after credited work.":"Public leaderboard: hidden (private profile).";
                             message="Contributor: "+(display instanceof String&&!((String)display).trim().isEmpty()?display:"Unnamed contributor")+"\n"+message+"\n"+visibility+"\nPersonal statistics are available from Dashboard.";
                         }catch(Exception unavailable){message="Contributor name unavailable while the coordinator cannot be reached.\n"+message+" Saved credentials and credits are retained.";}
                     }else message+=" This device is linked to an existing profile; its dashboard token is not stored here.";

@@ -16,7 +16,7 @@ from file_state import atomic_write
 
 APP_ID="EnigmaVolunteerGrid"
 APP_NAME="Enigma Volunteer Grid"
-VERSION="0.4.14"
+VERSION="0.5.0"
 RUN_KEY=r"Software\Microsoft\Windows\CurrentVersion\Run"
 UNINSTALL_BASE=r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 PAYLOAD_NAMES=("EnigmaGrid.exe","EnigmaGridWorker.exe","EnigmaGridUpdater.exe","release_config.json","LICENSES.txt")

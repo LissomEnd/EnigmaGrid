@@ -31,7 +31,9 @@ try:
         calls.update(cpu=0,gpu=0)
         runtime={'settings':worker.normalize_settings({'cpu_percent':cpu,'gpu_percent':gpu})}
         outputs.append(worker.run_portable(lease,runtime)[0])
-        assert bool(calls['cpu'])==bool(cpu),calls
+        # A tiny one-cohort job is indivisible; GPU owns it exclusively when
+        # enabled, while full-size jobs use independent CPU/GPU lanes.
+        assert bool(calls['cpu'])==bool(cpu and not gpu),calls
         assert bool(calls['gpu'])==bool(gpu),calls
         assert runtime['progress']==1
     assert outputs[0]==outputs[1]==outputs[2]

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(enigmagrid_gpu LANGUAGES CXX)
-add_library(enigmagrid_gpu SHARED vulkan_rows.cpp)
+add_library(enigmagrid_gpu SHARED vulkan_rows.cpp vulkan_solver.cpp)
 target_compile_features(enigmagrid_gpu PRIVATE cxx_std_17)
 target_link_libraries(enigmagrid_gpu vulkan log)
 target_link_options(enigmagrid_gpu PRIVATE "-Wl,-z,max-page-size=16384")

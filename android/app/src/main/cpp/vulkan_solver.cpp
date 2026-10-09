@@ -19,6 +19,7 @@ struct SolverCompute {
     VkDescriptorSetLayout layout{};VkPipelineLayout pipelineLayout{};VkPipeline pipeline{};
     VkDescriptorPool descriptors{};VkCommandPool commands{};VkFence fence{};
     VkDescriptorSet set{};VkCommandBuffer cmd{};bool initialized=false;uint32_t capacity=0;
+    uint32_t recordedCount=0,recordedHashSize=0;
     ~SolverCompute(){
         if(device){vkDeviceWaitIdle(device);if(fence)vkDestroyFence(device,fence,nullptr);if(commands)vkDestroyCommandPool(device,commands,nullptr);if(descriptors)vkDestroyDescriptorPool(device,descriptors,nullptr);if(pipeline)vkDestroyPipeline(device,pipeline,nullptr);if(pipelineLayout)vkDestroyPipelineLayout(device,pipelineLayout,nullptr);if(layout)vkDestroyDescriptorSetLayout(device,layout,nullptr);if(shader)vkDestroyShaderModule(device,shader,nullptr);for(int i=0;i<3;i++){if(buffers[i])vkDestroyBuffer(device,buffers[i],nullptr);if(memory[i])vkFreeMemory(device,memory[i],nullptr);}vkDestroyDevice(device,nullptr);}
         if(instance)vkDestroyInstance(instance,nullptr);
@@ -68,12 +69,16 @@ struct SolverCompute {
         }
         const VkDeviceSize inputBytes=input.size()*4,outputBytes=input[0]*(3+input[4]*26)*4;
         enigmagrid::uploadHost(device,memory[0],coherent[0],input.data(),inputBytes);
-        checked(vkResetCommandPool(device,commands,0));checked(vkResetFences(device,1,&fence));
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;checked(vkBeginCommandBuffer(cmd,&begin));
+        uint32_t hashSize=2;while(hashSize<input[3]*2)hashSize*=2;
+        // The buffers and descriptor set are persistent. Re-record only when
+        // the bounded dispatch shape changes; the recorded fills still run on
+        // EVERY submission, before the solver reads the visited tables.
+        if(recordedCount!=input[0]||recordedHashSize!=hashSize){
+        checked(vkResetCommandPool(device,commands,0));
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};checked(vkBeginCommandBuffer(cmd,&begin));
         // Clear visited-table headers with transfer commands instead of a serial
         // loop in every solver invocation. Key storage is read only for occupied
         // slots, so it does not need clearing. Reinitialize on EVERY dispatch.
-        uint32_t hashSize=2;while(hashSize<input[3]*2)hashSize*=2;
         for(uint32_t core=0;core<input[0];core++)
             vkCmdFillBuffer(cmd,buffers[2],VkDeviceSize(core)*41384*4,VkDeviceSize(hashSize)*4,0);
         VkBufferMemoryBarrier cleared{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -85,6 +90,9 @@ struct SolverCompute {
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,1,&cleared,0,nullptr);
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&set,0,nullptr);vkCmdDispatch(cmd,(input[0]+15)/16,1,1);
         VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);checked(vkEndCommandBuffer(cmd));
+        recordedCount=input[0];recordedHashSize=hashSize;
+        }
+        checked(vkResetFences(device,1,&fence));
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;checked(vkQueueSubmit(queue,1,&submit,fence));checked(vkWaitForFences(device,1,&fence,VK_TRUE,5000000000ULL));
         std::vector<uint32_t> output(input[0]*(3+input[4]*26));enigmagrid::downloadHost(device,memory[1],coherent[1],output.data(),outputBytes);return output;
     }

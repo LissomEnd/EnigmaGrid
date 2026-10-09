@@ -1,7 +1,7 @@
 import sys,tempfile,json,copy
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'worker'))
-from bounded_gpu_qualification import load_qualification,sha256
+from bounded_gpu_qualification import load_qualification,load_parity,sha256
 with tempfile.TemporaryDirectory() as tmp:
     root=Path(tmp);files=[root/name for name in ('native.dll','shader.spv','adapter.py')]
     for f in files:f.write_bytes(f.name.encode())
@@ -11,10 +11,18 @@ with tempfile.TemporaryDirectory() as tmp:
     def load(value,hardware='local-hash'):
         record.write_text(json.dumps(value));return load_qualification(record,lib,shader,hardware,adapter=adapter,factory=factory)
     assert load(data)['qualified'] and len(loads)==1
+    slow=copy.deepcopy(data)
+    slow['warm_trials'][0]['hybrid_seconds']=.12
+    record.write_text(json.dumps(slow))
+    assert load_qualification(record,lib,shader,'local-hash',adapter=adapter,factory=factory) is None
+    assert load_parity(record,lib,shader,'local-hash',adapter=adapter,factory=factory)['qualified']
+    expanded=copy.deepcopy(data);expanded['cpu_workers']=32
+    assert load(expanded)['cpu_workers']==32
+    assert len(loads)==3
     assert load(data,'other-machine') is None
     for field,value in [('parity_passed',False),('core_checks',656),('cpu_workers',True),('gpu_cores',129),('adapter_sha256','changed'),('shader_sha256','changed'),('library_sha256','changed')]:
         bad=copy.deepcopy(data);bad[field]=value;assert load(bad) is None
     for field,value in [('domain_start',0),('domain_start',True),('receipt_equal',False),('hybrid_seconds',.099),('cpu_seconds',float('nan')),('hybrid_seconds',True)]:
         bad=copy.deepcopy(data);bad['warm_trials'][1][field]=value;assert load(bad) is None
-    assert len(loads)==1,'Invalid qualification loaded native code'
+    assert len(loads)==3,'Invalid qualification loaded native code'
 print('PASS qualification binds hardware and all code assets; insufficient parity, unstable gain and invalid metrics do not load DLL')

@@ -23,14 +23,21 @@ foreach ($buildTarget in @($out,$work,$spec)) {
 }
 New-Item -ItemType Directory -Force $out,$work,$spec | Out-Null
 $solverStage=Join-Path $work 'solver'
-Get-ChildItem -LiteralPath "$root\solver" -Recurse -File | Where-Object {
-  $_.Extension -in @('.py','.cl','.json','.txt') -and $_.FullName -notmatch '[\\/]__pycache__[\\/]'
-} | ForEach-Object {
-  $relative=$_.FullName.Substring((Join-Path $root 'solver').Length+1)
+$solverRoot=[IO.Path]::GetFullPath((Join-Path $root 'solver'))+'\'
+$sourceProvenance=@()
+Get-Content -LiteralPath "$root\scripts\solver-runtime-files.txt" | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') } | ForEach-Object {
+  $relative=$_.Trim()
+  if([IO.Path]::IsPathRooted($relative) -or ($relative -split '[/\\]') -contains '..'){throw 'Unsafe solver manifest path'}
+  $source=[IO.Path]::GetFullPath((Join-Path $solverRoot $relative))
+  if(-not $source.StartsWith($solverRoot,[StringComparison]::OrdinalIgnoreCase)){throw 'Solver input outside source root'}
+  if(-not (Test-Path -LiteralPath $source -PathType Leaf)){throw "Missing reviewed solver input: $relative"}
+  if((Get-Item -LiteralPath $source).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Solver input cannot be a reparse point'}
   $destination=Join-Path $solverStage $relative
   New-Item -ItemType Directory -Force (Split-Path $destination -Parent) | Out-Null
-  Copy-Item -LiteralPath $_.FullName -Destination $destination
+  Copy-Item -LiteralPath $source -Destination $destination
+  $sourceProvenance+=@{path=('solver/'+$relative.Replace('\','/'));sha256=(Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()}
 }
+$sourceProvenance | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath "$root\dist\solver-source-provenance.json" -Encoding UTF8
 
 $commonMeta=@("--icon","$root\assets\enigma-grid.ico","--version-file","$root\assets\version_info.txt")
 $tray=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
@@ -47,6 +54,8 @@ $worker=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--console",
   "--add-binary","$nativeLibrary;worker/native",
   "--add-data","$nativeShader;worker/native",
   "--hidden-import","bounded_gpu_qualification",
+  "--hidden-import","gpu_lane_qualification",
+  "--hidden-import","portable_batch_qualification",
   "--hidden-import","search.vulkan_bounded",
   "--hidden-import","updater","--collect-all","pyopencl",
   "--hidden-import","search.portable_search","--hidden-import","search.process_map","--hidden-import","search.windows_spawn",
@@ -70,7 +79,7 @@ $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$out\*" -DestinationPath $zip -CompressionLevel Optimal
 
-& $py "$root\scripts\create_installer_payload.py" $out "0.4.14"
+& $py "$root\scripts\create_installer_payload.py" $out "0.5.0"
 if($LASTEXITCODE -ne 0){throw "Installer payload manifest failed"}
 $setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
   "--name","EnigmaGridSetup","--distpath","$root\dist","--workpath","$work\setup","--specpath",$spec,

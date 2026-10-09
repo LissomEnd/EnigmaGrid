@@ -6,11 +6,17 @@ import org.enigmagrid.core.EnigmaM4;
 
 final class GpuQualification {
     static String run(Context context) throws Exception {
+        android.content.SharedPreferences settings=context.getSharedPreferences("worker-settings",0);
+        ResourceGuard guard=new ResourceGuard(context,settings);guard.setChargingOnly(settings.getBoolean("charging_only",true));
+        java.util.function.BooleanSupplier cancel=()->{
+            if(Thread.currentThread().isInterrupted())return true;
+            String reason=guard.get();if(reason!=null)throw new org.enigmagrid.core.QualificationProtection(reason);return false;
+        };
         try(GpuProcess gpu=new GpuProcess(context)){
         String[] rotors={"I","II","III","IV","V","VI","VII","VIII"};int checked=0;
         long start=System.nanoTime();
         for(int sample=0;sample<12;sample++) {
-            if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
+            if(cancel.getAsBoolean())throw new java.util.concurrent.CancellationException();
             String[] moving={rotors[sample%8],rotors[(sample+1)%8],rotors[(sample+3)%8]};
             String reflector=sample%2==0?"Bthin":"Cthin",greek=sample%3==0?"Gamma":"Beta";
             String positions=sample%2==0?"AEVZ":"ZMZM",rings=sample%2==0?"AZMN":"DCBA";
@@ -23,8 +29,8 @@ final class GpuQualification {
                 for(int i=0;i<length;i++){if(rows[i*26+x]!=expected.charAt(offset+i)-65)throw new IllegalStateException("GPU/CPU mismatch");checked++;}
             }
         }
-        for(int count:new int[]{1,2,16})for(int length:new int[]{1,2,3,16,71,72}){
-            if(Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException();
+        for(int count:(android.os.Build.VERSION.SDK_INT>=27?new int[]{1,2,16,64,128}:new int[]{1,2,16}))for(int length:new int[]{1,2,3,16,71,72}){
+            if(cancel.getAsBoolean())throw new java.util.concurrent.CancellationException();
             java.util.List<org.enigmagrid.core.BoundedCrib.Key> keys=new java.util.ArrayList<>();
             for(int i=0;i<count;i++)keys.add(org.enigmagrid.core.BoundedCrib.coreAt((i*271828183L)%org.enigmagrid.core.BoundedCrib.DOMAIN));
             int[][][] actual=org.enigmagrid.core.RowBatch.unpack(gpu.rows(org.enigmagrid.core.RowBatch.pack(keys,72-length,length)),count,length);
@@ -34,15 +40,16 @@ final class GpuQualification {
             }
         }
         java.util.concurrent.atomic.AtomicInteger dispatches=new java.util.concurrent.atomic.AtomicInteger();
-        org.enigmagrid.core.BatchedRows batched=new org.enigmagrid.core.BatchedRows(packed->{dispatches.incrementAndGet();return gpu.rows(packed);},()->Thread.currentThread().isInterrupted());
-        int receipts=EngineQualification.run(context,()->Thread.currentThread().isInterrupted(),batched);
+        org.enigmagrid.core.BatchedRows batched=new org.enigmagrid.core.BatchedRows(packed->{dispatches.incrementAndGet();return gpu.rows(packed);},()->cancel.getAsBoolean());
+        int receipts=EngineQualification.run(context,()->cancel.getAsBoolean(),batched);
         long[] indices=new long[128];for(int i=0;i<indices.length;i++)indices[i]=i*100003L;
-        java.util.Map<String,Object> cpu=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->Thread.currentThread().isInterrupted(),null,8);
+        java.util.Map<String,Object> cpu=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->cancel.getAsBoolean(),null,8);
         dispatches.set(0);
-        java.util.Map<String,Object> accelerated=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->Thread.currentThread().isInterrupted(),batched,8);
+        java.util.Map<String,Object> accelerated=org.enigmagrid.core.BoundedCrib.search("BDZGO","AAAAA",0,indices,0,5000,64,256,2048,()->cancel.getAsBoolean(),batched,8);
         if(!org.enigmagrid.core.Canonical.json(cpu).equals(org.enigmagrid.core.Canonical.json(accelerated)))throw new IllegalStateException("Batched receipt mismatch");
-        if(dispatches.get()!=8)throw new IllegalStateException("Expected eight GPU batches: "+dispatches.get());
-        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts plus 128-core/eight-dispatch parity in "+((System.nanoTime()-start)/1000000)+" ms. GPU is ready for compatible grid work.";
+        int expectedDispatches=(indices.length+63)/64;
+        if(dispatches.get()!=expectedDispatches)throw new IllegalStateException("Unexpected GPU batch count: "+dispatches.get());
+        return "Isolated Vulkan compute. Passed "+checked+" contact comparisons and "+receipts+" full GPU-assisted receipts plus 128-core/"+expectedDispatches+"-dispatch parity in "+((System.nanoTime()-start)/1000000)+" ms. GPU is ready for compatible grid work.";
         }
     }
 }

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 from file_state import atomic_write
 import windows_telemetry
+from performance_telemetry import DeviceTelemetry
 from receipt_outbox import ReceiptOutbox,OutboxUploader,MAX_RESULTS
 from completion_transport import CompletionTransport
 from cpu_budget import CpuBudget
@@ -31,7 +32,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.4.14"
+VERSION="0.5.0"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
@@ -211,13 +212,20 @@ def persist_completion(state_path,state,payload):
     result_outbox(state_path,state).append(payload)
 
 
-def deliver_pending(state_path,state):
+def deliver_pending(state_path,state,runtime=None):
     queue=result_outbox(state_path,state);last=None
     for payload in queue.pending():
-        ack=post(state['server'],'/api/complete',payload,state['device_token'],timeout=120)
+        started=time.monotonic()
+        try:ack=post(state['server'],'/api/complete',payload,state['device_token'],timeout=120)
+        finally:
+            if runtime is not None:
+                record_legacy_metric(runtime,'_legacy_upload_seconds',time.monotonic()-started)
         if not isinstance(ack,dict) or ack.get('ok') is not True:
             raise RuntimeError('Coordinator did not acknowledge saved result; retained locally')
-        queue.acknowledge(payload['lease_id']);last=ack
+        removed=queue.acknowledge(payload['lease_id']);last=ack
+        # An ACK retires this durable item locally even when the server
+        # reports an idempotent replay; this is not a new/verified-result count.
+        if runtime is not None and removed:record_legacy_metric(runtime,'_legacy_receipts_acked',1)
     return last
 
 
@@ -287,7 +295,9 @@ def heartbeat_once(state,runtime):
 def request_work(state,runtime):
     if runtime.get('_batch_requests',False):
         return request_batch_work(state,runtime)
-    reply=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
+    started=time.monotonic()
+    try:reply=post(state["server"],"/api/lease",{"meta":meta(runtime)},state["device_token"])
+    finally:record_legacy_metric(runtime,'_legacy_lease_seconds',time.monotonic()-started)
     # New coordinators return the same control snapshot with the lease.
     # Older servers still need a heartbeat before executing any returned work.
     if all(key in reply for key in ("settings","enabled","quarantined")):
@@ -307,10 +317,11 @@ def batch_request_payload(runtime):
     return payload
 
 
-def timed_batch_request(state,payload):
+def timed_batch_request(state,payload,observe=None):
     started=time.monotonic()
-    reply=post(state['server'],'/api/leases',payload,state['device_token'])
-    return reply,time.monotonic()-started
+    try:return post(state['server'],'/api/leases',payload,state['device_token']),time.monotonic()-started
+    finally:
+        if observe is not None:observe(time.monotonic()-started)
 
 
 def start_batch_prefetch(state,runtime):
@@ -329,7 +340,8 @@ def start_batch_prefetch(state,runtime):
     if pool is None:
         pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='lease-prefetch')
         runtime['_allocation_pool']=pool
-    future=pool.submit(timed_batch_request,state,payload)
+    future=pool.submit(timed_batch_request,state,payload,
+        lambda elapsed:record_legacy_metric(runtime,'_legacy_lease_seconds',elapsed))
     runtime['_batch_pending']=(future,computed,control_revision)
 
 
@@ -364,7 +376,8 @@ def request_batch_work(state,runtime,*,take=True):
             reply,runtime['_allocation_seconds']=future.result()
             stale_controls=runtime.get('_control_revision',0)!=control_revision
         else:
-            reply,runtime['_allocation_seconds']=timed_batch_request(state,batch_request_payload(runtime))
+            reply,runtime['_allocation_seconds']=timed_batch_request(state,batch_request_payload(runtime),
+                lambda elapsed:record_legacy_metric(runtime,'_legacy_lease_seconds',elapsed))
     except urllib.error.HTTPError as error:
         if error.code!=404:raise
         runtime['_batch_requests']=False
@@ -397,6 +410,12 @@ def request_batch_work(state,runtime,*,take=True):
     runtime['_batch_controls']=control;runtime['_batch_controls_at']=time.monotonic()
     return {'lease':runtime['_lease_queue'].pop(0) if take and runtime['_lease_queue'] else None,
             'retry_after_seconds':reply.get('retry_after_seconds',0)},control
+
+def lease_retry_seconds(retry_after,idle_seconds):
+    """Honor an explicit coordinator retry hint; use idle pacing otherwise."""
+    if isinstance(retry_after,(int,float)) and math.isfinite(retry_after) and retry_after>0:
+        return min(60,max(.25,retry_after))
+    return max(.25,idle_seconds)
 
 def heartbeat_loop(stop,state,runtime):
     while not stop.wait(20):
@@ -443,6 +462,15 @@ def runtime_guard(fn):
 
 
 @runtime_guard
+def record_legacy_metric(runtime,key,amount):
+    if key not in ('_legacy_lease_seconds','_legacy_upload_seconds','_legacy_receipts_acked'):
+        raise ValueError('Unknown legacy telemetry metric')
+    if not isinstance(amount,(int,float)) or not math.isfinite(amount) or amount<0:
+        return
+    runtime[key]=runtime.get(key,0)+amount
+
+
+@runtime_guard
 def record_throughput(runtime, units, compute_seconds):
     now=time.monotonic()
     previous=runtime.get('_mean_job_seconds',compute_seconds)
@@ -482,6 +510,7 @@ def publish_health(runtime, status=None):
             save_plain_json(path,{"version":VERSION,"pid":os.getpid(),"started":runtime.get("started",time.time()),
                                   "heartbeat":time.time(),"status":runtime.get("status","starting"),
                                   "resource":runtime.get("resource","cpu"),"progress":runtime.get("progress",0),
+                                  "active_engine":runtime.get("active_engine"),
                                   "telemetry":runtime.get("telemetry",{}),
                                   "throughput":throughput_snapshot(runtime),
                                   "bounded_backend":runtime.get("bounded_backend","CPU"),
@@ -492,6 +521,8 @@ def publish_health(runtime, status=None):
                                   "ready_blocks":runtime.get("ready_blocks"),
                                   "persistence_seconds":runtime.get("persistence_seconds",0),
                                   "wait_reason":runtime.get("wait_reason",""),
+                                  "portable_batch_blocks":runtime.get("_portable_batch_blocks",4),
+                                  "portable_batch_reason":runtime.get("portable_batch_reason",""),
                                   "thermal_reason":runtime.get("thermal_reason","")})
         except OSError:
             # A telemetry write must never abort a computation or its heartbeat.
@@ -505,8 +536,10 @@ def _thermal_probe(runtime,state_path):
     now=time.monotonic()
     if runtime.get("_telemetry_device") is None:
         runtime["_telemetry_device"]=windows_telemetry.SystemTelemetry()
-    if now-runtime.get("_telemetry_at",0)>=1 or "telemetry" not in runtime:
-        try:runtime["telemetry"]=runtime["_telemetry_device"].sample()
+    if now-runtime.get("_telemetry_at",0)>=3 or "telemetry" not in runtime:
+        try:
+            with runtime.setdefault('_telemetry_sample_lock',threading.Lock()):
+                runtime["telemetry"]=runtime["_telemetry_device"].sample()
         except Exception:runtime["telemetry"]={}
         runtime["_telemetry_at"]=now
     ctl=read_control(state_path)
@@ -529,20 +562,24 @@ def cooperative_gate(runtime,state_path,pool=None):
         if runtime.get('_qualification_check'):runtime['_qualification_check']()
         block_stop=runtime.get('_block_stop_event')
         if block_stop is not None and block_stop.is_set():
+            cancel_portable_batch_qualification(runtime)
             raise InterruptedError('Block work stopped')
         reason,ctl=_thermal_probe(runtime,state_path)
         if ctl.get("stop_requested"):
+            cancel_portable_batch_qualification(runtime)
             if pool is not None:pool.set_percent(0)
             raise InterruptedError("Work stopped")
         if ctl.get("paused"):
+            cancel_portable_batch_qualification(runtime)
             if pool is not None:pool.set_percent(0)
             publish_health(runtime,"paused");time.sleep(.1);continue
         if reason:
+            cancel_portable_batch_qualification(runtime)
             if pool is not None:pool.set_percent(0)
             publish_health(runtime,"cooling");time.sleep(.25);continue
         return ctl
 
-def client_summary(state_path):
+def client_summary(state_path,stop_event=None):
     state=load_state(Path(state_path))
     hw=_HW or {}
     base={"registered":bool(state),"hardware":{"cpu_count":hw.get("cpu_count",os.cpu_count() or 1),
@@ -554,8 +591,10 @@ def client_summary(state_path):
     base["server"]=state.get("server","")
     base["settings"]=normalize_settings(state.get("settings",{}))
     base["device_id"]=state.get("device_id","")
+    if stop_event is not None and stop_event.is_set():return base
     try:base["global"]=get_json(state["server"],"/api/public/status",10)
     except Exception as e:base["global_error"]=type(e).__name__
+    if stop_event is not None and stop_event.is_set():return base
     token=state.get("dashboard_token","")
     if token:
         try:
@@ -598,8 +637,196 @@ def run_event_stochastic(lease):
     out.sort(key=lambda x:x.get("score",-1e99),reverse=True);out=out[:max(topk,12)]
     return {"summary":{"engine":"event_stochastic_v1","units":lease["end_unit"]-lease["start_unit"]},
             "candidates":out},len(out)
-def run_portable(lease,runtime=None,state_path=None):
-    from concurrent.futures import ThreadPoolExecutor
+def cancel_portable_batch_qualification(runtime):
+    from portable_batch_qualification import stop_owned_process
+    active=runtime.get("_portable_batch_qualification")
+    if active is None:return
+    active["cancel"].set()
+    with active["process_lock"]:
+        stop_owned_process(active["process"])
+
+
+def portable_batch_settings_signature(settings):
+    return (bool(settings.get("allow_cpu",True)),
+            bool(settings.get("allow_gpu",True)),
+            int(settings.get("cpu_percent",0)),
+            int(settings.get("gpu_percent",0)),
+            cpu_threads(int(settings.get("cpu_percent",0))))
+
+
+def portable_batch_profile_path(state_path,identity):
+    """Keep independent, bounded local qualification records for rotating scopes."""
+    digest=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()[:24]
+    return Path(state_path).with_name(f"portable-gpu-batch-qualification-{digest}.json")
+
+
+def prune_portable_batch_profiles(record,protected=(),maximum=64):
+    """Only derived batch profiles are evicted; account and receipt files are untouched."""
+    try:
+        profiles=list(record.parent.glob("portable-gpu-batch-qualification-"+"[0-9a-f]"*24+".json"))
+        if len(profiles)<=maximum:return
+        protected=set(protected)|{record}
+        ordered=sorted((path.stat().st_mtime_ns,path) for path in profiles if path not in protected)
+        for _,path in ordered[:max(0,len(profiles)-maximum)]:path.unlink()
+    except OSError:
+        # Cache eviction cannot interfere with accepted grid work.
+        pass
+
+
+def portable_batch_blocks(lease,runtime,state_path,text,joint,scorers):
+    """One local, cancellable qualification per exact portable scope.
+
+    The production default remains four blocks until a full CPU+GPU (or GPU
+    only) receipt and timing profile is checked against this device and code.
+    """
+    from portable_batch_qualification import (DEFAULT_BLOCKS,asset_fingerprint,
+        device_fingerprint,load_profile,save_profile,scope_for,
+        spawn_qualification,stop_owned_process)
+    if state_path is None or not scorers:return DEFAULT_BLOCKS
+    settings=runtime["settings"]
+    if not runtime.get("enabled",True) or runtime.get("quarantined",False):
+        runtime["portable_batch_reason"]="Automatic check deferred while device is disabled"
+        return DEFAULT_BLOCKS
+    if (not settings.get("allow_gpu",True) or settings.get("gpu_percent")!=100
+        or (joint and (not settings.get("allow_cpu",True) or settings.get("cpu_percent")!=100))):
+        runtime["portable_batch_reason"]="Automatic check requires full-duty CPU and GPU settings"
+        return DEFAULT_BLOCKS
+    sample=runtime.get("telemetry") or {}
+    free_gb=sample.get("available_gb")
+    if not isinstance(free_gb,(int,float)) or not math.isfinite(free_gb) or free_gb<2:
+        runtime["portable_batch_reason"]="Automatic check deferred for memory headroom"
+        return DEFAULT_BLOCKS
+    prior_unit_seconds=runtime.get("_portable_last_unit_seconds")
+    # The pilot compares twelve full units; never benchmark an invented
+    # smaller workload. Wait for one actual unit timing before starting it.
+    if (not isinstance(prior_unit_seconds,(int,float)) or
+        not math.isfinite(prior_unit_seconds) or prior_unit_seconds<=0):
+        runtime["portable_batch_reason"]="Waiting for one compatible unit timing"
+        return DEFAULT_BLOCKS
+    cfg=lease["config"]
+    scope=scope_for(cfg,text,"joint" if joint else "gpu")
+    if scope["count"]<4096:return DEFAULT_BLOCKS
+    try:
+        static=runtime.get("_portable_batch_static_key")
+        if static is None:
+            static=(device_fingerprint(scorers),asset_fingerprint(
+                ROOT,__file__,frozen=FROZEN,executable=sys.executable))
+            runtime["_portable_batch_static_key"]=static
+        identity=(json.dumps(scope,sort_keys=True),*static)
+    except (OSError,ValueError,AttributeError,ImportError):
+        return DEFAULT_BLOCKS
+    lock=runtime.setdefault("_portable_batch_profile_lock",threading.Lock())
+    record=portable_batch_profile_path(state_path,identity)
+    legacy_record=Path(state_path).with_name("portable-gpu-batch-qualification.json")
+    with lock:
+        if runtime.get("_portable_batch_profile_key")!=identity:
+            runtime["_portable_batch_profile_key"]=identity
+            loaded=load_profile(record,identity[1],identity[2],scope)
+            if loaded is None:loaded=load_profile(legacy_record,identity[1],identity[2],scope)
+            runtime["_portable_batch_blocks"]=loaded if loaded is not None else DEFAULT_BLOCKS
+            runtime["_portable_batch_profile_valid"]=loaded is not None
+            if loaded is not None:
+                runtime["portable_batch_reason"]="Qualified on this device and workload"
+            else:
+                runtime["portable_batch_reason"]="Using four blocks pending this workload's qualification"
+        selected=runtime["_portable_batch_blocks"]
+        active=runtime.get("_portable_batch_qualification")
+        if runtime["_portable_batch_profile_valid"]:return selected
+        if active and active["thread"].is_alive():
+            runtime["portable_batch_reason"]="Checking another portable workload; using four blocks"
+            return selected
+        attempted=runtime.setdefault("_portable_batch_attempted",set())
+        if identity in attempted or len(attempted)>=64 or runtime.get("_block_qualification"):
+            return selected
+        attempted.add(identity)
+        budget=min(180,max(60,20+18*prior_unit_seconds))
+        runtime["portable_batch_reason"]="Checking device with exact portable workload"
+        start_settings=portable_batch_settings_signature(settings)
+        start_control=read_control(state_path)
+        cancel=threading.Event()
+        # Preserve all real grid units: test receipts are discarded locally.
+        sample_lease={"config":dict(cfg),"start_unit":int(lease["start_unit"]),
+                      "end_unit":int(lease["start_unit"])+1}
+        try:
+            process,receive=spawn_qualification(run_portable,sample_lease,
+                dict(settings),scope,identity[1],identity[2],seconds=budget)
+        except (OSError,RuntimeError,TypeError,AttributeError):
+            runtime["portable_batch_reason"]="Batch qualification unavailable this session; using four blocks"
+            return selected
+        def background():
+            report=None;deadline=time.monotonic()+budget
+            try:
+                while not cancel.wait(.2):
+                    if receive.poll():
+                        report=receive.recv();break
+                    with active["process_lock"]:
+                        running=process.is_alive()
+                    if not running or time.monotonic()>=deadline:
+                        break
+                    reason,ctl=_thermal_probe(runtime,state_path)
+                    available=(runtime.get("telemetry") or {}).get("available_gb")
+                    current=runtime.get("settings",{})
+                    if (reason or ctl.get("paused") or ctl.get("stop_requested")
+                        or any(ctl.get(key)!=start_control.get(key)
+                               for key in ("max_cpu_temp_c","max_gpu_temp_c"))
+                        or not runtime.get("enabled",True)
+                        or runtime.get("quarantined",False)
+                        or not isinstance(available,(int,float))
+                        or not math.isfinite(available) or available<2
+                        or not current.get("allow_gpu",True)
+                        or current.get("gpu_percent")!=100
+                        or (joint and (not current.get("allow_cpu",True)
+                                       or current.get("cpu_percent")!=100))
+                        or portable_batch_settings_signature(current)!=start_settings):
+                        break
+                with active["process_lock"]:
+                    stop_owned_process(process)
+                if report is not None and not cancel.is_set():
+                    from portable_batch_qualification import choose
+                    if (report.get("format")=="portable-opencl-batch-v1"
+                        and report.get("hardware")==identity[1]
+                        and report.get("assets")==identity[2]
+                        and report.get("scope")==scope
+                        and report.get("parity_passed") is True
+                        and report.get("selected_blocks")==choose(report.get("trials"))):
+                        with lock:
+                            if not cancel.is_set():
+                                save_profile(record,report)
+                                prune_portable_batch_profiles(record,
+                                    (portable_batch_profile_path(state_path,item) for item in attempted))
+                                if runtime.get("_portable_batch_profile_key")==identity:
+                                    runtime["_portable_batch_blocks"]=report["selected_blocks"]
+                                    runtime["_portable_batch_profile_valid"]=True
+                                    runtime["portable_batch_reason"]="Qualified full receipt and aggregate throughput"
+                                return
+                with lock:
+                    if runtime.get("_portable_batch_profile_key")==identity:
+                        runtime["portable_batch_reason"]="Batch qualification unavailable this session; using four blocks"
+            except (EOFError,OSError,ValueError,TypeError):
+                with active["process_lock"]:
+                    stop_owned_process(process)
+                with lock:
+                    runtime["portable_batch_reason"]="Batch qualification unavailable this session; using four blocks"
+            finally:
+                with active["process_lock"]:
+                    stop_owned_process(process)
+                receive.close()
+                with lock:
+                    if runtime.get("_portable_batch_qualification") is active:
+                        runtime.pop("_portable_batch_qualification",None)
+                    if (runtime.get("_portable_batch_profile_key")!=identity
+                        and not runtime.get("_portable_batch_profile_valid")):
+                        runtime["portable_batch_reason"]="Using four blocks pending this workload's qualification"
+        thread=threading.Thread(target=background,name="portable-batch-check")
+        active=dict(thread=thread,cancel=cancel,process=process,
+            process_lock=threading.Lock(),identity=identity)
+        runtime["_portable_batch_qualification"]=active
+        thread.start()
+        return selected
+
+
+def run_portable(lease,runtime=None,state_path=None,*,gpu_scorers=None,
+                 gpu_blocks_override=None,qualification_check=None):
     from search.portable_search import search,score_cpu
     from search.cpu_numba import encode
     import numpy as np
@@ -607,58 +834,119 @@ def run_portable(lease,runtime=None,state_path=None):
     text=json.loads((ROOT/"solver/runtime/data/messages/p1030680.json").read_text())["ciphertext"]
     inp=encode(text);runtime=runtime or {}
     settings=runtime.get("settings",{"cpu_percent":50,"gpu_percent":0})
-    gpu=bool(_GPU_SCORERS and settings.get("allow_gpu",True) and settings.get("gpu_percent",0)>0)
+    scorers=_GPU_SCORERS if gpu_scorers is None else gpu_scorers
+    gpu=bool(scorers and settings.get("allow_gpu",True) and settings.get("gpu_percent",0)>0)
     cpu=bool(settings.get("allow_cpu",True) and settings.get("cpu_percent",0)>0)
     backend="opencl" if gpu else "cpu"
-    runtime["resource"]="CPU + GPU" if gpu and cpu else ("GPU" if gpu else "CPU")
+    joint=gpu and cpu and int(cfg.get('count_per_unit',4096))>256
+    # One 256-trajectory cohort cannot be split into independent search jobs.
+    runtime["resource"]="CPU + GPU" if joint else ("GPU" if gpu else "CPU")
     threads=cpu_threads(settings.get("cpu_percent",50)) or 1
     def cpu_score(keys):
         import numba
         numba.set_num_threads(min(threads,numba.config.NUMBA_NUM_THREADS))
         return score_cpu(inp,keys)
     from scoring_pool import OrderedScorers
-    gpu_pool=OrderedScorers(_GPU_SCORERS) if gpu else None
-    def gpu_score(keys):return np.concatenate(gpu_pool.score(keys))
-    pool=ThreadPoolExecutor(max_workers=1) if gpu and cpu else None
-    def scorer(keys):
-        if gpu and cpu and len(keys)>1:
-            middle=len(keys)//2
-            future=pool.submit(cpu_score,keys[:middle])
-            right=gpu_score(keys[middle:])
-            return np.concatenate((future.result(),right))
-        return gpu_score(keys) if gpu else cpu_score(keys)
-    def checkpoint(offset,iteration):
+    gpu_pool=OrderedScorers(scorers) if gpu else None
+    gpu_lock=runtime.setdefault('_portable_gpu_lock',threading.Lock())
+    def gpu_score(keys):
+        # OpenCL scorers reuse their command queues and buffers across jobs.
+        # Block lanes may overlap, but an individual device must not.
+        with gpu_lock:return np.concatenate(gpu_pool.score(keys))
+    def checkpoint(offset,iteration,cohort_blocks=1):
+        if qualification_check:qualification_check()
         if not state_path:return
         ctl=cooperative_gate(runtime,state_path)
         count=max(1,int(cfg.get("count_per_unit",4096)))
         iterations=max(1,int(cfg.get("iterations",512)))
-        unit_progress=(offset+min(256,count-offset)*iteration/iterations)/count
-        runtime["progress"]=(unit-int(lease["start_unit"])+unit_progress)/max(1,int(lease["end_unit"])-int(lease["start_unit"]))
+        unit_progress=(offset+min(256*cohort_blocks,count-offset)*iteration/iterations)/count
+        progress=(unit-int(lease["start_unit"])+unit_progress)/max(1,int(lease["end_unit"])-int(lease["start_unit"]))
+        runtime["progress"]=max(runtime.get("progress",0),progress)
         # Health writes are throttled; the separate heartbeat also covers compilation.
         if time.monotonic()-runtime.get("last_local_health",0)>2:
             publish_health(runtime,"stopping" if ctl["stop_requested"] else "computing")
             runtime["last_local_health"]=time.monotonic()
     out=[]
     try:
+        selected=(gpu_blocks_override if gpu_blocks_override is not None else
+                  portable_batch_blocks(lease,runtime,state_path,text,joint,scorers) if gpu else 1)
+        if type(selected) is not int or selected not in (1,4,8,16):
+            raise ValueError("Invalid qualified GPU cohort size")
         for unit in range(int(lease["start_unit"]),int(lease["end_unit"])):
+            unit_started=time.perf_counter()
             count=int(cfg.get("count_per_unit",4096));topk=int(cfg.get("topk",8))
-            hits=search(text,int(cfg.get("base_attempt",71000000000))+unit*count,
-                        count=count,iterations=int(cfg.get("iterations",512)),topk=topk,
+            start=int(cfg.get("base_attempt",71000000000))+unit*count
+            common=dict(iterations=int(cfg.get("iterations",512)),topk=topk,
                         min_pairs=int(cfg.get("min_pairs",0)),max_pairs=int(cfg.get("max_pairs",13)),
-                        event_kinds=tuple(cfg.get("event_kinds",[1,2,3,4,5,6])),backend=backend,
-                        percent=int(settings.get("gpu_percent",100)) if gpu else 100,
-                        checkpoint=checkpoint,scorer=scorer)
+                        event_kinds=tuple(cfg.get("event_kinds",[1,2,3,4,5,6])))
+            if joint:
+                # CPU and GPU claim disjoint deterministic 256-key cohorts.
+                # GPU batches only the device-qualified number of cohorts;
+                # both lanes claim disjoint work without a fixed split.
+                gpu_stride=256*selected
+                gpu_initial=min(gpu_stride,max(256,((count-1)//256)*256))
+                cpu_initial=min(256,count-gpu_initial)
+                next_offset=[gpu_initial+cpu_initial];claim_lock=threading.Lock()
+                def lane(use_gpu):
+                    found=[];stride=gpu_stride if use_gpu else 256
+                    initial=(0,gpu_initial) if use_gpu else (gpu_initial,cpu_initial)
+                    first=True
+                    while True:
+                        if first:
+                            offset,size=initial;first=False
+                        else:
+                            with claim_lock:
+                                offset=next_offset[0]
+                                next_offset[0]+=min(stride,max(0,count-offset))
+                            size=min(stride,max(0,count-offset))
+                        if size<=0:break
+                        blocks=(size+255)//256 if use_gpu else 1
+                        def gate(local_offset,iteration):
+                            checkpoint(offset+local_offset,iteration,blocks)
+                        found.extend(search(text,start+offset,count=size,backend='opencl' if use_gpu else 'cpu',
+                                            percent=int(settings.get('gpu_percent',100)) if use_gpu else 100,
+                                            checkpoint=gate,scorer=gpu_score if use_gpu else cpu_score,
+                                            cohort_blocks=blocks,**common))
+                    return found
+                with runtime.setdefault('_portable_executor_lock',threading.Lock()):
+                    gpu_executor=runtime.get('_portable_gpu_executor')
+                    cpu_executor=runtime.get('_portable_cpu_executor')
+                    if gpu_executor is None:
+                        gpu_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='portable-gpu')
+                        runtime['_portable_gpu_executor']=gpu_executor
+                    if cpu_executor is None:
+                        cpu_executor=ThreadPoolExecutor(max_workers=1,thread_name_prefix='portable-cpu')
+                        runtime['_portable_cpu_executor']=cpu_executor
+                gpu_future=gpu_executor.submit(lane,True)
+                cpu_future=cpu_executor.submit(lane,False)
+                try:hits=gpu_future.result()+cpu_future.result()
+                finally:
+                    # A failed lane must drain its peer before its scorer or
+                    # OpenCL buffers can be reused by the next job.
+                    for future in (gpu_future,cpu_future):
+                        try:future.result()
+                        except BaseException:pass
+                hits.sort(key=lambda h:(h['metrics']['search_cost'],h['attempt']))
+                hits=hits[:topk]
+            else:
+                blocks=selected if gpu else 1
+                hits=search(text,start,count=count,backend=backend,
+                            percent=int(settings.get("gpu_percent",100)) if gpu else 100,
+                            checkpoint=lambda offset,iteration:checkpoint(offset,iteration,blocks),
+                            scorer=gpu_score if gpu else cpu_score,cohort_blocks=blocks,**common)
             for hit in hits:hit["unit"]=unit
             out.extend(hits)
+            if state_path is not None:
+                runtime["_portable_last_unit_seconds"]=max(.001,time.perf_counter()-unit_started)
         runtime["progress"]=1.0
     finally:
-        if pool:pool.shutdown(wait=True)
         if gpu_pool:gpu_pool.close()
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 
-def constrained_process_limit(requested, available_bytes=None, total_bytes=None, existing_workers=0):
-    """Conservative child-process ceiling; the CPU slider remains an upper bound."""
+def constrained_process_limit(requested, available_bytes=None, total_bytes=None, existing_workers=0, reserve_fraction=.25):
+    """Child-process ceiling with at least 2 GiB of physical headroom."""
+    if reserve_fraction not in (.15,.25):raise ValueError('Invalid memory reserve')
     if available_bytes is None or total_bytes is None:
         try:
             if os.name != 'nt':
@@ -674,12 +962,36 @@ def constrained_process_limit(requested, available_bytes=None, total_bytes=None,
                 available_bytes,total_bytes=memory.available,memory.total
         except Exception:
             return 0
-    reserve=max(2*1024**3,int(total_bytes*.25))
+    reserve=max(2*1024**3,int(total_bytes*reserve_fraction))
     budget=max(0,int(available_bytes)-reserve+max(0,int(existing_workers))*512*1024**2)
     # Frozen children import the solver/native runtime independently. Reserve
     # 512 MiB per child. Available memory, rather than an arbitrary eight-core
     # ceiling, determines how much of the requested CPU quota can be fed.
     return min(32,max(0,int(requested)),budget//(512*1024**2))
+
+
+def constrained_memory_reserve(runtime):
+    """Only a qualified full-duty GPU hybrid may use the 15% reserve."""
+    settings=runtime.get('settings',{})
+    qualified=runtime.get('_bounded_gpu_qualification',{}).get('qualified') is True
+    return .15 if qualified and settings.get('allow_cpu') and settings.get('allow_gpu') and settings.get('cpu_percent')==100 and settings.get('gpu_percent')==100 else .25
+
+
+def apply_constrained_cpu_budget(runtime,pool,pct,count):
+    """Apply one measured CPU duty gate to production and local qualification."""
+    with runtime.setdefault('_metrics_lock',threading.RLock()):
+        observed=runtime.get('telemetry',{}).get('cpu_percent')
+        delay=0
+        if isinstance(observed,(int,float)) and math.isfinite(observed):
+            budget=runtime.setdefault('_cpu_budget',CpuBudget())
+            delay=budget.delay(time.monotonic(),pct,runtime.get('_telemetry_at'),observed)
+            pool.set_percent(0 if delay>0 else 100)
+            runtime['cpu_quota_provider']='measured_process_tree'
+            runtime['cpu_average_10s']=budget.measured_percent()
+        else:
+            runtime['cpu_quota_provider']='estimated_worker_duty'
+            pool.set_percent(min(100,max(1,int((os.cpu_count() or 1)*pct/count))))
+    if delay>0:time.sleep(min(.02,delay))
 
 
 def release_constrained_pool(runtime):
@@ -697,12 +1009,14 @@ def prepare_shared_constrained(runtime):
     percent=max(0,min(100,int(settings.get('cpu_percent',0))))
     if not percent or not settings.get('allow_cpu',True):return False
     requested=min(32,max(1,math.ceil((os.cpu_count() or 1)*percent/100)))
-    count=constrained_process_limit(requested)
+    count=constrained_process_limit(requested,reserve_fraction=constrained_memory_reserve(runtime))
     if not count:return False
     release_constrained_pool(runtime)
-    runtime['_shared_constrained_pool']=ConcurrentProcessMaps(count)
+    # One slot remains available to grid work while a bounded background
+    # qualification compares up to four local search lanes in this same pool.
+    runtime['_shared_constrained_pool']=ConcurrentProcessMaps(count,max_searches=5)
     runtime.setdefault('_cpu_budget',CpuBudget())
-    qualification=runtime.get('_bounded_gpu_qualification',{})
+    qualification=runtime.get('_bounded_gpu_lane_qualification') or runtime.get('_bounded_gpu_qualification',{})
     if qualification.get('qualified') is True and qualification.get('cpu_workers')==count and callable(qualification.get('dispatch')):
         def percent():
             current=runtime.get('settings',{})
@@ -713,10 +1027,12 @@ def prepare_shared_constrained(runtime):
 
 def release_shared_constrained(runtime):
     # The block pipeline joins its compute tasks before releasing these owners.
-    gpu=runtime.pop('_shared_gpu_solver',None)
-    if gpu is not None:gpu.close()
-    pool=runtime.pop('_shared_constrained_pool',None)
-    if pool is not None:pool.close()
+    gpu=runtime.get('_shared_gpu_solver')
+    if gpu is not None:
+        gpu.close();runtime.pop('_shared_gpu_solver',None)
+    pool=runtime.get('_shared_constrained_pool')
+    if pool is not None:
+        pool.close();runtime.pop('_shared_constrained_pool',None)
     runtime.pop('_block_stop_event',None)
 
 
@@ -746,7 +1062,7 @@ def load_bounded_gpu(state_path,runtime):
         bounded_cpu_reason(runtime,'Vulkan qualification unavailable: '+type(error).__name__)
 
 
-def run_constrained_parallel(lease,runtime,state_path):
+def run_constrained_parallel(lease,runtime,state_path,mode=None):
     from search.crib_work import run
     from search.process_map import OrderedProcessMap
     import math
@@ -757,7 +1073,7 @@ def run_constrained_parallel(lease,runtime,state_path):
     requested=min(32,max(1,math.ceil((os.cpu_count() or 1)*percent/100)))
     shared=runtime.get('_shared_constrained_pool')
     pool=shared or runtime.get('_constrained_pool')
-    count=shared.workers if shared is not None else constrained_process_limit(requested,existing_workers=pool.workers if pool else 0)
+    count=shared.workers if shared is not None else constrained_process_limit(requested,existing_workers=pool.workers if pool else 0,reserve_fraction=constrained_memory_reserve(runtime))
     if not count:
         release_constrained_pool(runtime)
         runtime['resource']='CPU';runtime['cpu_threads']=1
@@ -786,21 +1102,8 @@ def run_constrained_parallel(lease,runtime,state_path):
         pct=max(0,min(100,int(current.get('cpu_percent',0))))
         if not current.get('allow_cpu',True) or not pct:
             pool.set_percent(0);raise InterruptedError('CPU disabled during pause')
-        with runtime.setdefault('_metrics_lock',threading.RLock()):
-            observed=runtime.get('telemetry',{}).get('cpu_percent')
-            delay=0
-            if isinstance(observed,(int,float)) and math.isfinite(observed):
-                budget=runtime.setdefault('_cpu_budget',CpuBudget())
-                delay=budget.delay(time.monotonic(),pct,runtime.get('_telemetry_at'),observed)
-                # One shared gate controls every child; no child applies another duty cycle.
-                pool.set_percent(0 if delay>0 else 100)
-                runtime['cpu_quota_provider']='measured_process_tree'
-                runtime['cpu_average_10s']=budget.measured_percent()
-            else:
-                # Unsupported telemetry must remain explicit, not masquerade as zero CPU.
-                runtime['cpu_quota_provider']='estimated_worker_duty'
-                pool.set_percent(min(100,max(1,int((os.cpu_count() or 1)*pct/count))))
-        if delay>0:time.sleep(min(.02,delay))
+        # Production and the local parity probe share the same budget and lock.
+        apply_constrained_cpu_budget(runtime,pool,pct,count)
     def progress(done,total):
         control();runtime['progress']=done/max(1,total)
         now=time.monotonic()
@@ -813,9 +1116,44 @@ def run_constrained_parallel(lease,runtime,state_path):
     job_hybrid=None
     qualification=runtime.get('_bounded_gpu_qualification',{})
     runtime['bounded_backend']='CPU ('+runtime.get('bounded_gpu_reason','Vulkan qualification not available')+')'
-    if qualification.get('qualified') is True:
+    if mode=='cpu' and runtime.get('_qualified_gpu_lane'):
+        owner=runtime.get('_shared_gpu_solver')
+        if owner is not None and not owner.failed:
+            runtime['bounded_backend']='CPU + Vulkan independent job lanes'
+            runtime['resource']='CPU + GPU'
+        elif owner is not None and owner.failed:
+            bounded_cpu_reason(runtime,'Vulkan independent lane failed; CPU fallback')
+    if mode=='gpu':
+        from search.crib_work import validate_envelope
+        from search.vulkan_bounded import HybridSolverMap
+        lane=runtime.get('_bounded_gpu_lane_probe') or runtime.get('_bounded_gpu_lane_qualification',{})
+        job=validate_envelope(lease)
+        scope=(len(job['core_indices']),len(job['crib']),job['model'],job['pairs'],
+               job['budgets']['node_limit'],job['budgets']['board_limit'],job['budgets']['completion_limit'])
+        shared_gpu=runtime.get('_shared_gpu_solver')
+        dispatch=lane.get('dispatch')
+        if (lane.get('qualified') and lane.get('cpu_workers')==count and
+            lane.get('scope')==scope and callable(dispatch) and shared_gpu is not None and
+            shared_gpu.budget.dispatch is dispatch and not shared_gpu.failed and
+            settings.get('allow_gpu') and int(settings.get('gpu_percent',0))>0):
+            def gpu_percent():
+                current=runtime.get('settings',{})
+                return max(0,min(100,int(current.get('gpu_percent',0)))) if current.get('allow_gpu',False) else 0
+            def failed(error):bounded_cpu_reason(runtime,'Vulkan lane failed: '+type(error).__name__)
+            job_hybrid=HybridSolverMap(dispatch,solve_map,128,checkpoint=control,
+                                      gpu_enabled=lambda:gpu_percent()>0,
+                                      on_failure=failed,gpu_percent=gpu_percent,
+                                      gpu_service=shared_gpu)
+            solve_map=job_hybrid
+            runtime['bounded_backend']='CPU + Vulkan independent job lane'
+            runtime['resource']='CPU + GPU'
+        elif runtime.get('_gpu_lane_probe_strict'):
+            raise ValueError('GPU lane prerequisite changed')
+        else:
+            runtime['bounded_backend']='CPU (GPU lane unavailable; safe fallback)'
+    elif mode!='cpu' and qualification.get('qualified') is True:
         runtime['bounded_backend']='CPU (Vulkan qualification uses a different CPU pool size)'
-    if qualification.get('qualified') is True and qualification.get('cpu_workers')==count:
+    if mode not in ('cpu','gpu') and qualification.get('qualified') is True and qualification.get('cpu_workers')==count:
         from search.crib_work import validate_envelope
         from search.vulkan_bounded import HybridSolverMap
         job=validate_envelope(lease)
@@ -846,15 +1184,18 @@ def run_constrained_parallel(lease,runtime,state_path):
                 runtime['resource']='CPU + GPU'
     try:
         result=run(lease,checkpoint=progress,solve_map=solve_map)
+        if mode=='gpu' and runtime.get('_gpu_lane_probe_strict') and (
+            job_hybrid is None or job_hybrid.gpu_dispatches<=0):
+            raise ValueError('GPU lane did not dispatch native work')
         return result,len(result['receipt']['candidates'])
     finally:
         if job_hybrid is not None:job_hybrid.close()
 
-def run_constrained(lease,runtime=None,state_path=None):
+def run_constrained(lease,runtime=None,state_path=None,mode=None):
     from search.crib_work import run
     runtime=runtime if runtime is not None else {}
     if runtime.get('_parallel_constrained'):
-        return run_constrained_parallel(lease,runtime,state_path)
+        return run_constrained_parallel(lease,runtime,state_path,mode=mode)
     runtime['resource']='CPU'
     last=time.monotonic()
     next_health=last
@@ -881,11 +1222,11 @@ def run_constrained(lease,runtime=None,state_path=None):
     result=run(lease,checkpoint=checkpoint)
     return result,len(result['receipt']['candidates'])
 
-def execute(lease,runtime=None,state_path=None):
+def execute(lease,runtime=None,state_path=None,mode=None):
     if lease["engine"]=="demo_hash":return run_demo(lease)
     if lease["engine"]=="event_stochastic_v1":return run_event_stochastic(lease)
     if lease["engine"]=="portable_event_v1":return run_portable(lease,runtime,state_path)
-    if lease["engine"]=="bounded_crib_v1":return run_constrained(lease,runtime,state_path)
+    if lease["engine"]=="bounded_crib_v1":return run_constrained(lease,runtime,state_path,mode=mode)
     raise RuntimeError("Unsupported engine: "+repr(lease["engine"]))
 
 def gpu_cooldown(percent,compute_seconds):
@@ -908,23 +1249,113 @@ def work(args,state):
     try:
         return _work(args,state,runtime)
     finally:
-        suspend_long_blocks(runtime)
+        updater=runtime.pop('_updater',None)
+        telemetry=runtime.pop('_device_telemetry',None)
         summary_publisher=runtime.pop('_summary_publisher',None)
-        if summary_publisher is not None:summary_publisher.close()
-        release_unused_work(state,runtime)
         allocation_pool=runtime.pop('_allocation_pool',None)
-        if allocation_pool is not None:allocation_pool.shutdown(wait=True)
         uploader=runtime.pop('_uploader',None)
-        if uploader is not None:uploader.close()
-        release_constrained_pool(runtime)
+        cleanup=(("updater",lambda:updater.shutdown() if updater is not None else None),
+                 ("blocks",lambda:suspend_long_blocks(runtime)),
+                 ("portable",lambda:release_portable_executor(runtime)),
+                 ("telemetry",lambda:telemetry.close() if telemetry is not None else None),
+                 ("summary",lambda:summary_publisher.close() if summary_publisher is not None else None),
+                 ("leases",lambda:release_unused_work(state,runtime)),
+                 ("allocation",lambda:allocation_pool.shutdown(wait=True) if allocation_pool is not None else None),
+                 ("outbox",lambda:uploader.close() if uploader is not None else None),
+                 ("constrained",lambda:release_constrained_pool(runtime)))
+        first_error=None;failures=[];completed=set()
+        for name,close in cleanup:
+            try:
+                close()
+                completed.add(name)
+            except Exception as error:
+                if first_error is None:first_error=error
+                failures.append(name+':'+type(error).__name__)
+        # Global OpenCL scorers are reused across ordinary profile switches.
+        # Finalize them only after both compute owners have actually stopped.
+        if ('portable' in completed and runtime.get('_block_pipeline') is None
+                and runtime.get('_block_qualification') is None):
+            try:close_global_opencl_scorers()
+            except Exception as error:
+                if first_error is None:first_error=error
+                failures.append('opencl:'+type(error).__name__)
+        native_owners_stopped=({'blocks','portable','constrained'} <= completed
+            and runtime.get('_block_pipeline') is None
+            and runtime.get('_block_qualification') is None
+            and runtime.get('_shared_gpu_solver') is None
+            and runtime.get('_constrained_hybrid') is None)
+        if native_owners_stopped:
+            try:close_global_native_solvers()
+            except Exception as error:
+                disable_global_native_auto_close()
+                if first_error is None:first_error=error
+                failures.append('vulkan:'+type(error).__name__)
+        else:
+            disable_global_native_auto_close()
+            if first_error is None:
+                first_error=RuntimeError('Native compute owners remain active')
+                failures.append('vulkan:owners_active')
+        if first_error is not None:
+            raise RuntimeError('Worker resource shutdown incomplete: '+','.join(failures)) from first_error
+
+
+def close_global_opencl_scorers():
+    remaining=[];failure=None
+    for scorer in tuple(_GPU_SCORERS):
+        try:scorer.close()
+        except Exception as error:
+            remaining.append(scorer)
+            if failure is None:failure=error
+    _GPU_SCORERS[:]=remaining
+    if failure is not None:raise RuntimeError('OpenCL scorer shutdown incomplete') from failure
+
+
+def close_global_native_solvers():
+    # No native DLL is loaded just for cleanup; only the adapter that actually
+    # dispatched work registers the library it owns.
+    module=sys.modules.get('search.vulkan_bounded')
+    if module is not None:module.close_loaded_native_solvers()
+
+
+def disable_global_native_auto_close():
+    module=sys.modules.get('search.vulkan_bounded')
+    if module is not None:module.disable_automatic_native_close()
+
+def release_portable_executor(runtime):
+    active=runtime.get("_portable_batch_qualification")
+    if active is not None:
+        cancel_portable_batch_qualification(runtime)
+        if active["thread"] is not threading.current_thread():
+            active["thread"].join(timeout=8)
+            if active["thread"].is_alive():
+                raise RuntimeError('Portable qualification did not terminate')
+        if runtime.get("_portable_batch_qualification") is active:
+            runtime.pop("_portable_batch_qualification",None)
+    for key in ('_portable_gpu_executor','_portable_cpu_executor'):
+        executor=runtime.pop(key,None)
+        if executor is not None:executor.shutdown(wait=True,cancel_futures=True)
+
+
+def close_long_block_pipeline(runtime,pipeline):
+    """Drop a block owner only after its compute and durable writers joined."""
+    try:pipeline.close()
+    except BaseException as error:
+        # A durable writer failure occurs after the executor joins. Keep
+        # descriptors unretired so the same local cursor can be recovered.
+        if not getattr(pipeline,'shutdown_complete',False):raise
+        close_error=error
+    else:close_error=None
+    release_shared_constrained(runtime)
+    if runtime.get('_block_pipeline') is pipeline:runtime.pop('_block_pipeline',None)
+    if close_error is not None:raise RuntimeError('Block persistence failed; local queue retained') from close_error
 
 
 def suspend_long_blocks(runtime):
-    pipeline=runtime.pop('_block_pipeline',None)
+    pipeline=runtime.get('_block_pipeline')
     if pipeline is None:return
+    cancel_block_qualification(runtime)
     # Finish in-flight HTTP operations before marking the resulting descriptors.
-    pipeline.close()
-    release_shared_constrained(runtime)
+    close_long_block_pipeline(runtime,pipeline)
     runtime['running_jobs']=0
     runtime.pop('_block_concurrency_considered',None)
     runtime['_qualified_block_lanes']=1
@@ -938,13 +1369,53 @@ def suspend_long_blocks(runtime):
         runtime['block_release_error']=type(error).__name__
 
 
-def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
+def safe_suspend_long_blocks(runtime):
+    """Keep live owners for a later retry when cancellation has not joined."""
+    try:suspend_long_blocks(runtime)
+    except Exception as error:
+        runtime['block_shutdown_error']=type(error).__name__
+        runtime['wait_reason']='block_shutdown_pending'
+        return False
+    runtime.pop('block_shutdown_error',None)
+    return True
+
+
+def bounded_lane_parity(state_path,envelopes):
+    """Exact native parity prerequisite; a failed hybrid speed test is allowed."""
+    from search.crib_work import validate_envelope
+    from bounded_gpu_qualification import load_parity,hardware_fingerprint
+
+    native=ROOT/'worker/native'
+    library=native/'enigmagrid_solver.dll';shader=native/'bounded_solver.spv'
+    adapter=ROOT/'solver/runtime/src/search/vulkan_bounded.py'
+    comparison=Path(state_path).with_name('bounded-gpu-comparison.json')
+    if not all(path.is_file() for path in (library,shader,adapter,comparison)):
+        return None
+    try:
+        parity=load_parity(comparison,library,shader,hardware_fingerprint(),adapter=adapter)
+        if parity is None:return None
+        for envelope in envelopes:
+            job=validate_envelope(envelope)
+            scope=(len(job['core_indices']),len(job['crib']),job['model'],job['pairs'],
+                   job['budgets']['node_limit'],job['budgets']['board_limit'],
+                   job['budgets']['completion_limit'])
+            if scope!=parity['scope']:return None
+        return parity
+    except (OSError,ValueError,RuntimeError,subprocess.SubprocessError):
+        return None
+
+
+def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline,*,envelopes=None,owner_runtime=None,shared_pool=False,cancel_event=None):
     from concurrency_qualification import qualify,select_lanes
-    if pipeline.running or runtime.get('_block_concurrency_considered') or time.monotonic()<runtime.get('_block_qualification_retry_at',0):return False
-    envelopes=pipeline.queue.qualification_sample()
+    from gpu_lane_qualification import qualify as qualify_gpu_lanes,select_profile
+    if envelopes is None and pipeline.running:return False
+    if runtime.get('_block_concurrency_considered') or time.monotonic()<runtime.get('_block_qualification_retry_at',0):return False
+    if envelopes is None:envelopes=pipeline.queue.qualification_sample()
     if not envelopes:return False
+    owner_runtime=owner_runtime or runtime
     settings=dict(runtime['settings'])
-    sources=['worker/worker.py','worker/concurrency_qualification.py','worker/cpu_budget.py',
+    sources=['worker/worker.py','worker/concurrency_qualification.py','worker/gpu_lane_qualification.py',
+             'worker/bounded_gpu_qualification.py','worker/block_pipeline.py','worker/cpu_budget.py',
              'solver/runtime/src/search/process_map.py','solver/runtime/src/search/vulkan_bounded.py',
              'solver/runtime/src/search/crib_work.py','solver/runtime/src/search/bounded_crib.py',
              'solver/runtime/src/search/c3_models.py','solver/runtime/src/search/work_block.py']
@@ -961,12 +1432,19 @@ def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
             assets.append(digest.hexdigest())
         runtime['_concurrency_asset_hashes']=assets
     gpu_record=Path(state_path).with_name('bounded-gpu-qualification.json')
-    expected_workers=constrained_process_limit(min(32,max(1,math.ceil((os.cpu_count() or 1)*int(settings['cpu_percent'])/100))))
+    active_pool=runtime.get('_shared_constrained_pool')
+    expected_workers=constrained_process_limit(
+        min(32,max(1,math.ceil((os.cpu_count() or 1)*int(settings['cpu_percent'])/100))),
+        existing_workers=active_pool.workers if active_pool is not None else 0,
+        reserve_fraction=constrained_memory_reserve(runtime))
+    if active_pool is not None:expected_workers=min(expected_workers,active_pool.workers)
     if not expected_workers:return False
     identity=dict(assets=assets,settings=settings,config=envelopes[0]['config'],
                   hardware=[platform.platform(),platform.processor(),os.cpu_count()],
                   workers=expected_workers,
-                  gpu=hashlib.sha256(gpu_record.read_bytes()).hexdigest() if gpu_record.is_file() else None)
+                  gpu=hashlib.sha256(gpu_record.read_bytes()).hexdigest() if gpu_record.is_file() else None,
+                  gpu_parity=hashlib.sha256(gpu_record.with_name('bounded-gpu-comparison.json').read_bytes()).hexdigest()
+                      if gpu_record.with_name('bounded-gpu-comparison.json').is_file() else None)
     key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
     path=Path(state_path).with_name('block-concurrency-qualification.json')
     try:record=json.loads(path.read_text(encoding='utf-8'))
@@ -976,27 +1454,48 @@ def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
             report=record['report'];lanes=select_lanes(report['trials'])
             if report.get('format')!='local-concurrency-v1' or report.get('jobs_per_trial')!=12 or report.get('parity_checks')!=120 or report.get('lanes')!=lanes:
                 raise ValueError('Incomplete cached qualification')
+            lane_report=report.get('gpu_lane')
+            if lane_report is not None and (
+                not isinstance(lane_report,dict) or lane_report.get('format')!='bounded-gpu-lanes-v1'
+                or lane_report.get('jobs_per_trial')!=12 or lane_report.get('cpu_lanes')!=lanes
+                or lane_report.get('mixed_cpu_lanes')!=min(lanes,3)
+                or lane_report.get('qualified') is not select_profile(lane_report.get('trials'),lanes)):
+                raise ValueError('Incomplete cached GPU lane comparison')
+            parity=(bounded_lane_parity(state_path,envelopes)
+                    if lane_report is not None and lane_report['qualified'] else None)
+            if lane_report is not None and lane_report['qualified'] and parity is None:
+                raise ValueError('GPU parity prerequisite expired')
         except (ValueError,KeyError,TypeError):pass
         else:
             runtime['_qualified_block_lanes']=lanes
             runtime['_qualified_block_config']=envelopes[0]['config']
+            if lane_report is not None:
+                runtime['_qualified_gpu_lane']=lane_report['qualified']
+                if parity is not None:
+                    runtime['_bounded_gpu_lane_qualification']=dict(parity,cpu_workers=expected_workers)
             runtime['_block_concurrency_considered']=True
-            return lanes!=pipeline.lanes
-    if not prepare_shared_constrained(runtime):return False
+            effective=min(4,lanes+1) if runtime.get('_qualified_gpu_lane') else lanes
+            return effective!=pipeline.lanes or bool(runtime.get('_qualified_gpu_lane'))!=(getattr(pipeline,'gpu_execute',None) is not None)
+    if shared_pool:
+        if runtime.get('_shared_constrained_pool') is None:return False
+    elif not prepare_shared_constrained(runtime):return False
     if runtime['_shared_constrained_pool'].workers!=expected_workers:
-        release_shared_constrained(runtime);return False
-    deadline=time.monotonic()+120;cancel=threading.Event()
+        if not shared_pool:release_shared_constrained(runtime)
+        return False
+    deadline=time.monotonic()+120;cancel=cancel_event or threading.Event()
     prior_stop=runtime.get('_block_stop_event')
     runtime['_block_stop_event']=cancel
     def check():
         if time.monotonic()>=deadline or cancel.is_set():raise InterruptedError('Concurrency qualification stopped')
-        if runtime.get('settings')!=settings or not runtime.get('enabled',True):raise InterruptedError('Qualification settings changed')
+        if owner_runtime.get('settings')!=settings or not owner_runtime.get('enabled',True):raise InterruptedError('Qualification settings changed')
         reason,control=_thermal_probe(runtime,state_path)
         if reason or control.get('paused') or control.get('stop_requested'):raise InterruptedError(reason or 'Qualification paused/stopped')
     runtime['_qualification_check']=check
     heartbeat_stop=threading.Event()
-    heartbeat=threading.Thread(target=heartbeat_loop,args=(heartbeat_stop,state,runtime),daemon=True)
-    heartbeat.start()
+    heartbeat=None
+    if not shared_pool:
+        heartbeat=threading.Thread(target=heartbeat_loop,args=(heartbeat_stop,state,runtime),daemon=True)
+        heartbeat.start()
     try:
         from search.crib_work import run
         pool=runtime['_shared_constrained_pool']
@@ -1006,18 +1505,57 @@ def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
                 def gate():
                     check()
                     pct=int(settings['cpu_percent'])
-                    pool.set_percent(min(100,max(1,int((os.cpu_count() or 1)*pct/pool.workers))))
+                    apply_constrained_cpu_budget(runtime,pool,pct,pool.workers)
                 return pool.view(gate)(fn,tasks)
             return run(envelope,checkpoint=lambda *_:check(),solve_map=cpu_only)
-        publish_health(runtime,'qualifying_concurrency')
-        report=qualify(envelopes,reference,lambda envelope:run_constrained_parallel(envelope,runtime,state_path)[0],
+        if not shared_pool:publish_health(runtime,'qualifying_concurrency')
+        report=qualify(envelopes,reference,lambda envelope:run_constrained_parallel(envelope,runtime,state_path,mode='cpu')[0],
                        checkpoint=check,cancel_running=cancel.set)
+        runtime['_qualified_gpu_lane']=False
+        if all(settings.get(k)==100 for k in ('cpu_percent','gpu_percent')) and settings.get('allow_gpu'):
+            parity=bounded_lane_parity(state_path,envelopes)
+            if parity is not None:
+                from search.vulkan_bounded import SharedGpuSolver
+                parity=dict(parity,cpu_workers=pool.workers)
+                prior_gpu=runtime.get('_shared_gpu_solver')
+                if prior_gpu is not None and prior_gpu.failed:
+                    runtime['gpu_lane_reason']='Existing GPU owner failed; comparison deferred'
+                else:
+                    if prior_gpu is not None:
+                        parity['dispatch']=prior_gpu.budget.dispatch
+                    gpu=prior_gpu or SharedGpuSolver(parity['dispatch'],lambda:100)
+                    if prior_gpu is None:runtime['_shared_gpu_solver']=gpu
+                    runtime['_bounded_gpu_lane_probe']=parity
+                    runtime['_gpu_lane_probe_strict']=True
+                    try:
+                        def cpu_job(envelope):
+                            return run_constrained_parallel(envelope,runtime,state_path,mode='cpu')[0]
+                        def gpu_job(envelope):
+                            result=run_constrained_parallel(envelope,runtime,state_path,mode='gpu')[0]
+                            if gpu.failed:
+                                raise ValueError('GPU lane backend failed or did not execute')
+                            return result
+                        lane_report=qualify_gpu_lanes(envelopes,reference,cpu_job,gpu_job,report['lanes'],
+                                                      checkpoint=check,cancel_running=cancel.set)
+                        report['gpu_lane']=lane_report
+                        runtime['_qualified_gpu_lane']=lane_report['qualified']
+                        if lane_report['qualified']:
+                            runtime['_bounded_gpu_lane_qualification']=parity
+                    except (ValueError,RuntimeError,OSError) as error:
+                        runtime['gpu_lane_reason']='Independent lane comparison failed: '+type(error).__name__
+                    finally:
+                        runtime.pop('_gpu_lane_probe_strict',None)
+                        runtime.pop('_bounded_gpu_lane_probe',None)
+                        if prior_gpu is None:
+                            gpu.close()
+                            runtime.pop('_shared_gpu_solver',None)
         check()
         save_plain_json(path,dict(identity=key,report=report))
         runtime['_qualified_block_lanes']=report['lanes']
         runtime['_qualified_block_config']=envelopes[0]['config']
         runtime['_block_concurrency_considered']=True
-        return report['lanes']!=pipeline.lanes
+        effective=min(4,report['lanes']+1) if runtime.get('_qualified_gpu_lane') else report['lanes']
+        return effective!=pipeline.lanes or bool(runtime.get('_qualified_gpu_lane'))!=(getattr(pipeline,'gpu_execute',None) is not None)
     except InterruptedError:
         runtime['_block_qualification_retry_at']=time.monotonic()+60
         if time.monotonic()>=deadline:
@@ -1026,21 +1564,86 @@ def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
         raise
     except (ValueError,OSError) as error:
         runtime['_qualified_block_lanes']=1
+        runtime['_qualified_gpu_lane']=False
         runtime['_block_concurrency_considered']=True
         runtime['concurrency_reason']='Qualification unavailable: '+type(error).__name__
         return False
     finally:
-        cancel.set();heartbeat_stop.set();heartbeat.join(timeout=2)
+        cancel.set();heartbeat_stop.set()
+        if heartbeat is not None:heartbeat.join(timeout=2)
         runtime.pop('_qualification_check',None)
-        release_shared_constrained(runtime)
+        if not shared_pool:release_shared_constrained(runtime)
         if prior_stop is not None:runtime['_block_stop_event']=prior_stop
+
+
+def cancel_block_qualification(runtime):
+    active=runtime.get('_block_qualification')
+    if active is None:
+        runtime.pop('_block_qualification_apply',None)
+        return
+    active['cancel'].set()
+    # The process pool is still owned by the pipeline at this point. Stop the
+    # qualifier before allowing that owner to be closed or resized.
+    active['thread'].join(timeout=8)
+    if active['thread'].is_alive():
+        raise RuntimeError('Block qualification did not terminate')
+    if runtime.get('_block_qualification') is active:
+        runtime.pop('_block_qualification',None)
+    runtime.pop('_block_qualification_apply',None)
+
+
+def poll_block_qualification(state_path,state,runtime,pipeline,allowed):
+    """Advance qualification without taking grid units from the compute thread."""
+    active=runtime.get('_block_qualification')
+    if active is not None and not active['thread'].is_alive():
+        active['thread'].join();runtime.pop('_block_qualification',None)
+        candidate=active['runtime'];error=active['error']
+        if error is not None:
+            runtime['_block_qualification_retry_at']=time.monotonic()+60
+            runtime['concurrency_reason']='Qualification deferred: '+type(error).__name__
+        elif runtime.get('settings')==active['settings']:
+            for key in ('_qualified_block_lanes','_qualified_block_config','_qualified_gpu_lane',
+                        '_bounded_gpu_lane_qualification','_block_concurrency_considered',
+                        '_block_qualification_retry_at','concurrency_reason','gpu_lane_reason'):
+                if key in candidate:runtime[key]=candidate[key]
+            if candidate.get('_block_concurrency_considered'):
+                cpu_lanes=candidate.get('_qualified_block_lanes',1)
+                gpu_lane=bool(candidate.get('_qualified_gpu_lane'))
+                effective=min(4,cpu_lanes+1) if gpu_lane else cpu_lanes
+                if effective!=pipeline.lanes or gpu_lane!=(getattr(pipeline,'gpu_execute',None) is not None):
+                    runtime['_block_qualification_apply']=True
+    if runtime.get('_block_qualification_apply'):
+        if pipeline.computing:return False
+        runtime.pop('_block_qualification_apply',None)
+        return True
+    if not allowed or active is not None or runtime.get('_block_concurrency_considered'):
+        return False
+    if time.monotonic()<runtime.get('_block_qualification_retry_at',0):return False
+    # A read-only fixture is captured before the first grid unit is claimed.
+    # A live CPU/GPU pool is reused: no second process tree or memory budget.
+    envelopes=pipeline.queue.qualification_sample()
+    if not envelopes:return False
+    if runtime.get('_shared_constrained_pool') is None and not prepare_shared_constrained(runtime):return False
+    runtime.setdefault('_metrics_lock',threading.RLock())
+    candidate=dict(runtime,settings=dict(runtime['settings']))
+    candidate.pop('health_path',None)
+    cancel=threading.Event()
+    active=dict(cancel=cancel,runtime=candidate,settings=dict(runtime['settings']),error=None)
+    def run():
+        try:maybe_qualify_block_concurrency(state_path,state,candidate,pipeline,envelopes=envelopes,
+                owner_runtime=runtime,shared_pool=True,cancel_event=cancel)
+        except BaseException as error:active['error']=error
+    active['thread']=threading.Thread(target=run,name='block-concurrency-check')
+    runtime['_block_qualification']=active
+    active['thread'].start()
+    return False
 
 
 def long_block_tick(state_path,state,runtime):
     """Run one local unit, with allocation and upload on separate executors."""
     sys.path.insert(0,str(ROOT/'solver/runtime/src'))
     from search.work_block import FORMAT
-    from block_queue import BlockQueue
+    from block_queue import BlockQueue,AckCounter
     from block_transport import BlockTransport
     from block_pipeline import BlockPipeline
     if runtime.get('_lease_queue') or runtime.get('_batch_pending'):return False
@@ -1059,25 +1662,39 @@ def long_block_tick(state_path,state,runtime):
         from search.work_result_groups import FORMAT as GROUP_FORMAT
         grouped=capabilities.get('work_result_groups')==GROUP_FORMAT
         queue=BlockQueue(Path(state_path).with_name('work-block-queue.dat'),
-                         dict(server=state['server'],device_id=state['device_id']),load_state,save_state,grouped=grouped)
+                         dict(server=state['server'],device_id=state['device_id']),load_state,save_state,
+                         grouped=grouped,ack_counter=runtime.setdefault('_bounded_ack_counter',AckCounter()))
         transport=BlockTransport(queue,lambda path,payload:post(state['server'],path,payload,state['device_token'],timeout=30),grouped=grouped)
-        def compute(envelope):
+        def compute(envelope,mode=None):
+            runtime['active_engine']=envelope.get('engine')
             qualified_config=runtime.get('_qualified_block_config')
             if qualified_config is not None and qualified_config!=envelope['config']:
                 runtime.pop('_block_concurrency_considered',None)
+                runtime['_qualified_gpu_lane']=False
+                runtime.pop('_bounded_gpu_lane_qualification',None)
                 if runtime.get('_shared_constrained_pool') is not None:
                     raise InterruptedError('Workload changed; requalify concurrency')
             publish_health(runtime,'computing')
             began=time.monotonic()
-            result,_=execute(envelope,runtime,state_path)
+            result,_=execute(envelope,runtime,state_path,mode=mode)
             record_throughput(runtime,envelope['end_unit']-envelope['start_unit'],max(.000001,time.monotonic()-began))
             return result
         transport.refresh_status()
-        lanes=runtime.get('_qualified_block_lanes',1)
-        if lanes not in (1,2,4):lanes=1
+        cpu_lanes=runtime.get('_qualified_block_lanes',1)
+        if cpu_lanes not in (1,2,4):cpu_lanes=1
+        gpu_lane=bool(runtime.get('_qualified_gpu_lane'))
+        lanes=min(4,cpu_lanes+1) if gpu_lane else cpu_lanes
         runtime['cpu_threads']=apply_cpu_limit(100)
         if lanes>1 and not prepare_shared_constrained(runtime):lanes=1
-        try:pipeline=BlockPipeline(queue,transport,compute,lanes=lanes)
+        if lanes==1:gpu_lane=False
+        if gpu_lane and runtime.get('_shared_gpu_solver') is None:
+            gpu_lane=False;lanes=cpu_lanes
+            runtime['_qualified_gpu_lane']=False
+            runtime.pop('_bounded_gpu_lane_qualification',None)
+            runtime.pop('_block_concurrency_considered',None)
+        cpu_execute=(lambda envelope:compute(envelope,mode='cpu')) if gpu_lane else compute
+        gpu_execute=(lambda envelope:compute(envelope,mode='gpu')) if gpu_lane else None
+        try:pipeline=BlockPipeline(queue,transport,cpu_execute,lanes=lanes,gpu_execute=gpu_execute)
         except BaseException:
             release_shared_constrained(runtime)
             raise
@@ -1102,21 +1719,26 @@ def long_block_tick(state_path,state,runtime):
         suspend_long_blocks(runtime)
         runtime.pop('_block_concurrency_considered',None)
         runtime['_qualified_block_lanes']=1
+        runtime['_qualified_gpu_lane']=False
+        runtime.pop('_bounded_gpu_lane_qualification',None)
         return True
     pipeline.poll_status()
     st=runtime['settings'];control=read_control(state_path)
     allowed=runtime.get('enabled',False) and st.get('allow_cpu',False) and st.get('cpu_percent',0)>0
     allowed=allowed and not control.get('paused') and not control.get('stop_requested')
-    if allowed and maybe_qualify_block_concurrency(state_path,state,runtime,pipeline):
+    if poll_block_qualification(state_path,state,runtime,pipeline,allowed):
         # Preserve the received blocks and outbox while replacing only executors.
-        pipeline.close();runtime.pop('_block_pipeline',None)
-        release_shared_constrained(runtime)
+        close_long_block_pipeline(runtime,pipeline)
         return True
     worked=pipeline.tick(allow_compute=allowed)
     runtime['running_jobs']=sum(not task.done() for task in pipeline.running)
     runtime.update(pipeline.queue.monitor_snapshot())
     runtime['wait_reason']='' if worked or pipeline.computing else (pipeline.wait_reason or '')
-    if not worked and not runtime['ready_units'] and not runtime['outbox_count'] and pipeline.wait_reason in ('block_calibration_required','legacy_priority_work','legacy_validation_work'):return False
+    if (not worked and not runtime['ready_units'] and not runtime['outbox_count']
+            and not pipeline.running and pipeline.fetch is None and not pipeline.writes
+            and runtime.get('_block_qualification') is None
+            and pipeline.wait_reason in ('block_calibration_required','legacy_priority_work','legacy_validation_work')):
+        return False
     if not worked:
         if pipeline.computing:
             publish_health(runtime,'computing');time.sleep(.01);return True
@@ -1132,18 +1754,40 @@ def _work(args,state,runtime):
     state_path=Path(args.state);health_path=state_path.with_name("worker-health.json")
     load_bounded_gpu(state_path,runtime)
     updater=UpdateManager(VERSION,state_path,state["server"]) if UpdateManager else None
+    runtime['_updater']=updater
     if updater:updater.start()
     started=time.time()
     runtime.update(health_path=health_path,started=started)
     publish_health(runtime,"starting")
+    if not args.once:
+        sensor=windows_telemetry.SystemTelemetry()
+        runtime['_telemetry_device']=sensor
+        def close_sensor():
+            active=runtime.get('_portable_batch_qualification')
+            if active is not None and active['thread'].is_alive():
+                raise RuntimeError('Portable qualification still uses native sensors')
+            active=runtime.get('_block_qualification')
+            if active is not None and active['thread'].is_alive():
+                raise RuntimeError('Block qualification still uses native sensors')
+            sensor.close()
+        def sample_monitor():
+            with runtime.setdefault('_telemetry_sample_lock',threading.Lock()):return sensor.sample()
+        telemetry=DeviceTelemetry(runtime,sample_monitor,publish_health,
+            lambda:get_json(state['server'],'/api/capabilities',5),
+            lambda payload:post(state['server'],'/api/device/telemetry/v1',payload,state['device_token'],timeout=5),
+            VERSION,close_sample=close_sensor)
+        runtime['_device_telemetry']=telemetry;telemetry.start()
     if not args.once and state_path.is_file():
-        publisher=SummaryPublisher(state_path,VERSION,client_summary)
+        publisher=SummaryPublisher(state_path,VERSION,client_summary,cancel_aware=True)
         runtime['_summary_publisher']=publisher;publisher.start()
     while True:
         try:
             publish_health(runtime)
             control=read_control(state_path)
             if control["stop_requested"]:
+                if not safe_suspend_long_blocks(runtime):
+                    publish_health(runtime,"stopping");time.sleep(1);continue
+                release_portable_executor(runtime)
                 print("Safe stop requested; worker is idle and will close.",flush=True)
                 publish_health(runtime,"stopped")
                 if updater:updater.shutdown()
@@ -1155,6 +1799,7 @@ def _work(args,state,runtime):
                 suspend_long_blocks(runtime)
                 release_unused_work(state,runtime)
                 release_constrained_pool(runtime)
+                release_portable_executor(runtime)
                 publish_health(runtime,"paused")
                 time.sleep(args.idle_seconds);continue
             thermal_reason,_thermal_ctl=_thermal_probe(runtime,state_path)
@@ -1185,14 +1830,20 @@ def _work(args,state,runtime):
                     runtime['wait_reason']='result_storage_full'
                     publish_health(runtime,'uploading');uploader.notify();time.sleep(.1);continue
                 if runtime.get('wait_reason')=='result_storage_full':runtime['wait_reason']=''
-            recovered=None if uploader is not None else deliver_pending(state_path,state)
+            recovered=None if uploader is not None else deliver_pending(state_path,state,runtime)
             if recovered is not None:
                 print(json.dumps({"recovered_completion":True,"ack":recovered}),flush=True)
                 if args.once:return 0
             if not args.once and runtime.get('_async_upload') and uploader is None:
                 transport=CompletionTransport(lambda path:get_json(state['server'],path,30),
                     lambda path,payload:post(state['server'],path,payload,state['device_token'],timeout=30))
-                uploader=OutboxUploader(result_outbox(state_path,state),None,send_batch=transport.send)
+                def timed_send_batch(items):
+                    started=time.monotonic()
+                    try:return transport.send(items)
+                    finally:record_legacy_metric(runtime,'_legacy_upload_seconds',time.monotonic()-started)
+                uploader=OutboxUploader(result_outbox(state_path,state),None,
+                    send_batch=timed_send_batch,
+                    on_ack=lambda _lease_id,_ack:record_legacy_metric(runtime,'_legacy_receipts_acked',1))
                 runtime['_uploader']=uploader
             if not args.once:
                 check_bounded_gpu_qualification(state_path,state,runtime)
@@ -1211,6 +1862,7 @@ def _work(args,state,runtime):
             runtime["cpu_threads"]=apply_cpu_limit(100 if constrained else st["cpu_percent"])
             if got.get("update_required") and updater:updater.force_check()
             lease=got.get("lease")
+            if lease:runtime['active_engine']=lease.get('engine')
             if lease and lease.get('engine')!='bounded_crib_v1':release_constrained_pool(runtime)
             if not lease:
                 # A temporary empty response must not tear down the warm solver
@@ -1218,9 +1870,7 @@ def _work(args,state,runtime):
                 # changes still release or reconfigure it in their own paths.
                 publish_health(runtime,"waiting")
                 if args.once:return 0
-                retry=got.get('retry_after_seconds',0)
-                if not isinstance(retry,(int,float)) or not math.isfinite(retry):retry=0
-                deadline=time.monotonic()+max(args.idle_seconds,min(60,max(0,retry)))
+                deadline=time.monotonic()+lease_retry_seconds(got.get('retry_after_seconds'),args.idle_seconds)
                 while time.monotonic()<deadline:
                     ctl=read_control(state_path)
                     if ctl.get('paused') or ctl.get('stop_requested'):break
@@ -1251,7 +1901,7 @@ def _work(args,state,runtime):
                 record_throughput(runtime,units,secs)
                 publish_health(runtime,"uploading")
                 if uploader is not None:uploader.notify();ack={'saved_locally':True}
-                else:ack=deliver_pending(state_path,state)
+                else:ack=deliver_pending(state_path,state,runtime)
             finally:
                 runtime["running_jobs"]=0
                 stop.set();th.join(timeout=2)
@@ -1272,13 +1922,15 @@ def _work(args,state,runtime):
             if args.once:return 0
         except KeyboardInterrupt:return 130
         except InterruptedError:
-            suspend_long_blocks(runtime)
+            if not safe_suspend_long_blocks(runtime):
+                publish_health(runtime,'stopping');time.sleep(1);continue
             release_constrained_pool(runtime)
             publish_health(runtime,'waiting')
             if args.once:return 2
             time.sleep(.1)
         except Exception as e:
-            suspend_long_blocks(runtime)
+            if not safe_suspend_long_blocks(runtime):
+                publish_health(runtime,'stopping');time.sleep(1);continue
             release_constrained_pool(runtime)
             publish_health(runtime,"connection_error")
             print(json.dumps({"worker_error":repr(e)}),flush=True)
@@ -1335,7 +1987,11 @@ def maybe_qualify_bounded_gpu(state_path,state,runtime):
         settings=runtime.get('settings',{})
         if not runtime.get('enabled',True) or not settings.get('allow_cpu') or not settings.get('allow_gpu') or settings.get('cpu_percent')!=100 or settings.get('gpu_percent')!=100:
             bounded_cpu_reason(runtime,'Vulkan tuning needs CPU and GPU enabled at 100%');return False
-        workers=constrained_process_limit(min(32,os.cpu_count() or 1))
+        # A bounded qualification may use a smaller but still explicit 15%
+        # reserve; production uses it only after the comparison qualifies.
+        # Qualification must use the same CPU pool size as production: the
+        # hybrid receipt and measured advantage are bound to that exact size.
+        workers=constrained_process_limit(min(32,os.cpu_count() or 1),reserve_fraction=.15)
         if not workers:
             bounded_cpu_reason(runtime,'Vulkan tuning deferred: insufficient free memory');return False
         if runtime.get('_bounded_gpu_qualification',{}).get('cpu_workers')==workers:return True
@@ -1359,6 +2015,20 @@ def maybe_qualify_bounded_gpu(state_path,state,runtime):
     except InterruptedError:
         bounded_cpu_reason(runtime,'Vulkan qualification interrupted')
         return False
+    except (OSError,TimeoutError,subprocess.SubprocessError,json.JSONDecodeError) as error:
+        # Coordinator/network/sensor inventory failures are prerequisites, not
+        # a failed parity proof. The caller retries at most once per minute.
+        bounded_cpu_reason(runtime,'Vulkan tuning deferred: '+type(error).__name__)
+        return False
+    except ValueError as error:
+        detail=str(error)
+        if detail in ('GPU inventory unavailable','Invalid CPU worker count'):
+            bounded_cpu_reason(runtime,'Vulkan tuning deferred: '+detail)
+            return False
+        # A parity/bounds error is a failed qualification, not a reason to
+        # retry on every idle boundary or to silently enable the GPU.
+        bounded_cpu_reason(runtime,'Vulkan comparison failed: '+detail[:96])
+        return True
     except Exception as error:
         bounded_cpu_reason(runtime,'Vulkan qualification unavailable: '+type(error).__name__)
         return True
@@ -1420,7 +2090,7 @@ def main():
     ap.add_argument("--self-test",action="store_true")
     ap.add_argument("--self-test-constrained",action="store_true")
     ap.add_argument("--qualify-bounded-gpu",action="store_true")
-    ap.add_argument("--qualification-workers",type=int,choices=range(1,9),default=2)
+    ap.add_argument("--qualification-workers",type=int,choices=range(1,33),default=2)
     ap.add_argument("--client-summary-json",action="store_true")
     ap.add_argument("--dashboard-token",action="store_true",help="Print the private dashboard token locally")
     ap.add_argument("--once",action="store_true");ap.add_argument("--disable",action="store_true")
@@ -1429,15 +2099,31 @@ def main():
     ap.add_argument("--gpu-percent",type=int,default=0);ap.add_argument("--idle-seconds",type=int,default=5)
     args=ap.parse_args()
     if args.qualify_bounded_gpu:
-        print(json.dumps(qualify_bounded_gpu_client(args.state,args.qualification_workers)));return
+        try:print(json.dumps(qualify_bounded_gpu_client(args.state,args.qualification_workers)))
+        finally:close_global_native_solvers()
+        return
     if args.self_test_constrained:
         constrained_self_test();return
     if args.self_test:
         h=hardware();assert "cpu_count" in h
         import numpy, numba
-        print(json.dumps({"ok":True,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__,
+        portable_assets=False;portable_spawn=False;portable_stop=False
+        try:
+            from portable_batch_qualification import (asset_fingerprint,
+                selftest_spawn,selftest_termination)
+            asset_fingerprint(ROOT,__file__,frozen=FROZEN,executable=sys.executable)
+            portable_assets=True
+            portable_spawn=selftest_spawn(run_portable)
+            portable_stop=selftest_termination()
+        except (OSError,ValueError,ImportError,TypeError):
+            pass
+        ok=portable_assets and portable_spawn and portable_stop
+        print(json.dumps({"ok":ok,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__,
                           "cpu_count":h.get("cpu_count",1),"capabilities":h.get("capabilities",[]),
-                          "gpus":h.get("gpus",[])}))
+                          "gpus":h.get("gpus",[]),"portable_batch_assets_ready":portable_assets,
+                          "portable_batch_spawn_ready":portable_spawn,
+                          "portable_batch_stop_ready":portable_stop}))
+        if not ok:raise SystemExit(2)
         return
     if args.client_summary_json:
         print(json.dumps(client_summary(args.state),ensure_ascii=False))
@@ -1463,4 +2149,10 @@ def main():
 if __name__=="__main__":
     import multiprocessing
     multiprocessing.freeze_support()
+    # Preserve a native-crash traceback in the worker's private stderr log.
+    # A diagnostic stream failure must not prevent contribution.
+    try:
+        import faulthandler
+        faulthandler.enable()
+    except (OSError,RuntimeError,ValueError,AttributeError):pass
     main()

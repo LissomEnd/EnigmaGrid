@@ -1,0 +1,24 @@
+# Reviewed public solver inputs for the standalone Windows bundle.
+# Additions require explicit source/license review; untracked files are not swept in.
+runtime/data/language/COPYING.GPL-3.0.txt
+runtime/data/language/german_quadgrams.txt
+runtime/data/messages/p1030680.json
+runtime/src/reference/enigma_m4.py
+runtime/src/search/bounded_crib.py
+runtime/src/search/c3_models.py
+runtime/src/search/cpu_numba.py
+runtime/src/search/crib_pilot.py
+runtime/src/search/crib_work.py
+runtime/src/search/event_stochastic.py
+runtime/src/search/plug_transition.py
+runtime/src/search/portable_score.cl
+runtime/src/search/portable_search.py
+runtime/src/search/portable_standard.py
+runtime/src/search/process_map.py
+runtime/src/search/research_program.py
+runtime/src/search/research_validation.py
+runtime/src/search/stochastic_c2.py
+runtime/src/search/vulkan_bounded.py
+runtime/src/search/windows_spawn.py
+runtime/src/search/work_block.py
+runtime/src/search/work_result_groups.py

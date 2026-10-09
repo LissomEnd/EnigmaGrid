@@ -10,6 +10,16 @@ public class AdaptiveRowsChecks {
   if(rows.dispatches()!=2||!rows.available())throw new AssertionError("successful GPU telemetry");
   if(clock.slept!=30||calls[0]!=2)throw new AssertionError("GPU duty");duty[0]=0;rows.rows(key,3,16);if(calls[0]!=2)throw new AssertionError("GPU disabled");
   if(rows.available()||rows.dispatches()!=2)throw new AssertionError("disabled telemetry");
+  // Raising the slider must cancel rest owed at a lower duty immediately.
+  duty[0]=100;long beforeFull=clock.slept;rows.rows(key,3,16);
+  if(clock.slept!=beforeFull)throw new AssertionError("100% retained old GPU cooldown");
+  Clock changing=new Clock(){public void sleep(long ms){super.sleep(ms);duty[0]=100;}};
+  duty[0]=25;
+  AdaptiveRows changingRows=new AdaptiveRows((k,o,n)->{changing.now+=10000000;return BoundedCrib.cpuRows(k,o,n);},()->duty[0],()->false,changing);
+  changingRows.rows(key,3,16);changingRows.rows(key,3,16);
+  if(changing.slept!=20)throw new AssertionError("Slider change during wait ignored");
+  long afterChange=changing.slept;changingRows.rows(key,3,16);
+  if(changing.slept!=afterChange)throw new AssertionError("New dispatch used stale GPU duty");
   int[] failures={0};AdaptiveRows broken=new AdaptiveRows((k,o,n)->{failures[0]++;throw new UnsatisfiedLinkError();},()->100,()->false,clock);
   if(!Arrays.deepEquals(expected,broken.rows(key,3,16)))throw new AssertionError("fallback");broken.rows(key,3,16);if(failures[0]!=1||!broken.failed())throw new AssertionError("failure latch");
   if(broken.available()||broken.dispatches()!=0)throw new AssertionError("failed telemetry");

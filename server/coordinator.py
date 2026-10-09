@@ -648,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             cid=rid("ctr");new_key=secrets.token_urlsafe(24);dash=secrets.token_urlsafe(24)
             con.execute("""insert into contributors(id,display_name,public_credit,join_key_hash,dashboard_token_hash,created)
-                           values(?,?,?,?,?,?)""",(cid,name,1 if b.get("public_credit",True) else 0,sha(new_key),sha(dash),now()))
+                           values(?,?,?,?,?,?)""",(cid,name,1 if b.get("public_credit",False) else 0,sha(new_key),sha(dash),now()))
             contributor=con.execute("select * from contributors where id=?",(cid,)).fetchone()
         token=secrets.token_urlsafe(32);did=rid("dev");meta=sanitize_meta(b.get("meta",{}));st=normalize_settings(b.get("settings",{}))
         caps=capabilities_from_meta(meta)
