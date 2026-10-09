@@ -9,9 +9,10 @@ import statistics
 import threading
 import time
 
-FORMAT = 'bounded-gpu-lanes-v1'
+FORMAT = 'bounded-gpu-lanes-v2'
 JOBS = 12
 TRIALS = 3
+MIN_REPEATABLE_GAIN = .01
 
 
 def select_profile(rows, cpu_lanes):
@@ -28,10 +29,17 @@ def select_profile(rows, cpu_lanes):
                 raise ValueError('Invalid GPU lane timing')
         if type(row.get('gpu_jobs')) is not int or not 1 <= row['gpu_jobs'] <= JOBS:
             raise ValueError('GPU lane did not receive timed work')
-    # A GPU lane must win repeatedly, not merely improve one lucky sample.
-    return (all(row['mixed_seconds'] <= row['cpu_seconds'] * .95 for row in rows)
-            and statistics.median(row['mixed_seconds'] for row in rows)
-                < statistics.median(row['cpu_seconds'] for row in rows) * .95)
+    # Require a paired win in every repeat, plus a measured gain in both
+    # the robust center and total wall time. A single lucky run is not enough.
+    cpu = [row['cpu_seconds'] for row in rows]
+    mixed = [row['mixed_seconds'] for row in rows]
+    cpu_total = sum(cpu)
+    mixed_total = sum(mixed)
+    if not math.isfinite(cpu_total) or not math.isfinite(mixed_total):
+        raise ValueError('Invalid GPU lane aggregate timing')
+    return (all(after < before for before, after in zip(cpu, mixed))
+            and statistics.median(mixed) <= statistics.median(cpu) * (1 - MIN_REPEATABLE_GAIN)
+            and mixed_total <= cpu_total * (1 - MIN_REPEATABLE_GAIN))
 
 
 def _run_profile(envelopes, expected, cpu_execute, gpu_execute, cpu_lanes,

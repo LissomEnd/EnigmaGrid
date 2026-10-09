@@ -102,7 +102,8 @@ jobs:
             'test_vulkan_bounded_adapter.py', 'test_bounded_gpu_qualification.py',
             'test_worker_gpu_qualification_control.py', 'test_worker_hybrid_routing.py',
             'test_worker_shared_constrained.py',
-            'test_thermal_legacy_controls.py', 'test_installer_controls.py',
+            'test_thermal_legacy_controls.py', 'test_worker_control_snapshot.py',
+            'test_worker_bounded_memory_policy.py', 'test_installer_controls.py',
             'test_summary_cache.py', 'test_monitor_navigation.py', 'test_worker_throughput.py'
           )
           foreach ($test in $tests) {

@@ -9,6 +9,22 @@ from gpu_lane_qualification import qualify,select_profile
 
 rows=[dict(trial=i,receipt_equal=True,cpu_seconds=.12,mixed_seconds=.075,gpu_jobs=4) for i in range(3)]
 assert select_profile(rows,1)
+
+def paired(cpu,mixed):
+    return [dict(trial=i,receipt_equal=True,cpu_seconds=before,
+                 mixed_seconds=after,gpu_jobs=2)
+            for i,(before,after) in enumerate(zip(cpu,mixed))]
+
+msi=paired((2.907,2.501,2.507),(2.422,2.409,2.483))
+assert select_profile(msi,4)
+assert not select_profile(paired((2.907,2.501,2.507),(2.422,2.501,2.507)),4)
+assert not select_profile(paired((1,1,1),(1,1,1)),4)
+assert not select_profile(paired((2.907,2.501,2.507),(2.422,2.409,2.508)),4)
+assert not select_profile(paired((1,1,1),(.996,.996,.996)),4)
+assert not select_profile(paired((100,1,1),(99.999,.98,.98)),4)
+try:select_profile(paired((1e308,1e308,1e308),(9e307,9e307,9e307)),4)
+except ValueError:pass
+else:raise AssertionError('Overflowed aggregate timing accepted')
 for field,value in [('mixed_seconds',.12),('cpu_seconds',float('nan')),
                     ('receipt_equal',False),('trial',4),('gpu_jobs',0)]:
     broken=copy.deepcopy(rows);broken[1][field]=value

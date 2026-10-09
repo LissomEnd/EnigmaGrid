@@ -236,15 +236,26 @@ def _thermal_limit(value,default,minimum,maximum):
     try:return max(minimum,min(maximum,int(value)))
     except Exception:return default
 
-def read_control(state_path):
+def _read_control_with_status(state_path):
     try:
         obj=json.loads(control_path(state_path).read_text(encoding="utf-8"))
-    except Exception:obj={}
-    return {"paused":bool(obj.get("paused",False)),
+        if not isinstance(obj,dict):raise ValueError('Invalid control state')
+        loaded=True
+    except Exception:obj={};loaded=False
+    control={"paused":bool(obj.get("paused",False)),
             "stop_requested":bool(obj.get("stop_requested",False)),
             "check_update":bool(obj.get("check_update",False)),
             "max_cpu_temp_c":_thermal_limit(obj.get("max_cpu_temp_c"),80,55,95),
             "max_gpu_temp_c":_thermal_limit(obj.get("max_gpu_temp_c"),75,50,90)}
+    return control,loaded
+
+_CONTROL_READ_OK=threading.local()
+
+def read_control(state_path):
+    _CONTROL_READ_OK.value=False
+    control,loaded=_read_control_with_status(state_path)
+    _CONTROL_READ_OK.value=loaded
+    return control
 
 def write_control(state_path,control):
     save_plain_json(control_path(state_path),{
@@ -542,7 +553,22 @@ def _thermal_probe(runtime,state_path):
                 runtime["telemetry"]=runtime["_telemetry_device"].sample()
         except Exception:runtime["telemetry"]={}
         runtime["_telemetry_at"]=now
-    ctl=read_control(state_path)
+    # The progress gate still checks its stop event on every yield. Only the
+    # on-disk control snapshot is shared for at most 50 ms under metrics_lock.
+    # A failed/missing read never acquires a fresh cache lifetime.
+    identity=os.path.abspath(os.fspath(control_path(state_path)))
+    cached=runtime.get('_control_snapshot')
+    if (isinstance(cached,tuple) and len(cached)==4 and cached[0]==identity and
+            cached[3] is read_control and
+            0<=now-cached[1]<.05):
+        ctl=dict(cached[2])
+    else:
+        # Preserve the one-argument read_control contract used by clients and
+        # test adapters. A substituted reader cannot mark its result cacheable.
+        _CONTROL_READ_OK.value=False
+        ctl=read_control(state_path)
+        loaded=bool(getattr(_CONTROL_READ_OK,'value',False))
+        runtime['_control_snapshot']=(identity,now,dict(ctl),read_control) if loaded else None
     sample=runtime.get("telemetry",{})
     cpu=sample.get("cpu_temp_c");gpu=sample.get("gpu_temp_c")
     cpu_limit=int(ctl.get("max_cpu_temp_c",80));gpu_limit=int(ctl.get("max_gpu_temp_c",75))
@@ -944,8 +970,42 @@ def run_portable(lease,runtime=None,state_path=None,*,gpu_scorers=None,
     out.sort(key=lambda x:(-x["score"],x["attempt"]));out=out[:max(topk,12)]
     return {"summary":{"engine":"portable_event_v1","units":lease["end_unit"]-lease["start_unit"]},"candidates":out},len(out)
 
-def constrained_process_limit(requested, available_bytes=None, total_bytes=None, existing_workers=0, reserve_fraction=.25):
-    """Child-process ceiling with at least 2 GiB of physical headroom."""
+_BOUNDED_PILOT_FLOOR = 2*1024**3
+# Conservative allowance for a bounded-only child; this narrow pilot does not
+# assert a peak-memory bound for every device or the portable solver.
+_BOUNDED_PILOT_PER_CHILD = 96*1024**2
+
+def _windows_commit_headroom():
+    """Remaining system commit budget; fail closed if Windows cannot report it."""
+    if os.name != 'nt':return None
+    try:
+        from ctypes import wintypes
+        class PerformanceInformation(ctypes.Structure):
+            _fields_=[('size',wintypes.DWORD)]+[(name,ctypes.c_size_t) for name in
+                ('commit_total','commit_limit','commit_peak','physical_total',
+                 'physical_available','system_cache','kernel_total','kernel_paged',
+                 'kernel_nonpaged','page_size')]+[(name,wintypes.DWORD) for name in
+                ('handles','processes','threads')]
+        info=PerformanceInformation();info.size=ctypes.sizeof(info)
+        psapi=ctypes.WinDLL('psapi',use_last_error=True)
+        get=psapi.GetPerformanceInfo
+        get.argtypes=(ctypes.POINTER(PerformanceInformation),wintypes.DWORD)
+        get.restype=wintypes.BOOL
+        if not get(ctypes.byref(info),info.size) or not info.page_size:return None
+        return max(0,int(info.commit_limit-info.commit_total))*int(info.page_size)
+    except (OSError,AttributeError,ValueError):return None
+
+def constrained_process_limit(requested, available_bytes=None, total_bytes=None, existing_workers=0,
+                              reserve_fraction=.25, *, commit_headroom_bytes=None,
+                              bounded_pilot=None, probe_commit=True):
+    """Conservative default plus a measured small-child Windows pilot.
+
+    The original 512 MiB/child and configured physical reserve remain the
+    default when they permit processes. A low-headroom pilot never grows more
+    than two bounded-only children, keeps 2 GiB free physical *and* commit
+    budget, and does not resize or terminate an active pool. It is intentionally
+    unavailable when the OS pressure probe fails.
+    """
     if reserve_fraction not in (.15,.25):raise ValueError('Invalid memory reserve')
     if available_bytes is None or total_bytes is None:
         try:
@@ -964,10 +1024,28 @@ def constrained_process_limit(requested, available_bytes=None, total_bytes=None,
             return 0
     reserve=max(2*1024**3,int(total_bytes*reserve_fraction))
     budget=max(0,int(available_bytes)-reserve+max(0,int(existing_workers))*512*1024**2)
-    # Frozen children import the solver/native runtime independently. Reserve
-    # 512 MiB per child. Available memory, rather than an arbitrary eight-core
-    # ceiling, determines how much of the requested CPU quota can be fed.
-    return min(32,max(0,int(requested)),budget//(512*1024**2))
+    # Keep the old 512 MiB/child policy for already-admitted higher-headroom
+    # machines. The bounded child does not import the portable NumPy/OpenCL
+    # scorer, so a separate two-child fallback can use a measured reserve.
+    default_count=min(32,max(0,int(requested)),budget//(512*1024**2))
+    if bounded_pilot is None:bounded_pilot=os.name=='nt'
+    if not bounded_pilot or default_count>=2 or int(requested)<2:return default_count
+    if commit_headroom_bytes is None and probe_commit:
+        commit_headroom_bytes=_windows_commit_headroom()
+    if type(commit_headroom_bytes) is not int or commit_headroom_bytes<0:return default_count
+    physical=int(available_bytes);committed=commit_headroom_bytes
+    if existing_workers==2:
+        # Keep a previously admitted two-child pool eligible for qualification
+        # as available memory changes. Owners are closed only between jobs.
+        if physical>=_BOUNDED_PILOT_FLOOR and committed>=_BOUNDED_PILOT_FLOOR:
+            return 2
+        return default_count
+    if existing_workers or default_count:
+        return default_count
+    required=_BOUNDED_PILOT_FLOOR+2*_BOUNDED_PILOT_PER_CHILD
+    if physical>=required and committed>=required:
+        return 2
+    return default_count
 
 
 def constrained_memory_reserve(runtime):
@@ -1456,7 +1534,7 @@ def maybe_qualify_block_concurrency(state_path,state,runtime,pipeline,*,envelope
                 raise ValueError('Incomplete cached qualification')
             lane_report=report.get('gpu_lane')
             if lane_report is not None and (
-                not isinstance(lane_report,dict) or lane_report.get('format')!='bounded-gpu-lanes-v1'
+                not isinstance(lane_report,dict) or lane_report.get('format')!='bounded-gpu-lanes-v2'
                 or lane_report.get('jobs_per_trial')!=12 or lane_report.get('cpu_lanes')!=lanes
                 or lane_report.get('mixed_cpu_lanes')!=min(lanes,3)
                 or lane_report.get('qualified') is not select_profile(lane_report.get('trials'),lanes)):
