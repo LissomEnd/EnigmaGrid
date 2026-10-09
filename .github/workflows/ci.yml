@@ -160,6 +160,8 @@ jobs:
         run: |
           $jdk = $env:JAVA_HOME_17_X64
           if (-not $jdk) { throw 'Java 17 is required for Android host checks' }
+          python android/core/qualify_background_execution.py --jdk "$jdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_resume.py --jdk "$jdk"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python android/core/qualify_resource_guard.py --jdk "$jdk"

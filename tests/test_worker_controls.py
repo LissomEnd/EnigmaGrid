@@ -65,6 +65,13 @@ try:
             # computation or manufacture a completed receipt from partial work.
             result.clear();errors.clear()
             worker.write_control(state,{'paused':True,'stop_requested':False})
+            # The worker intentionally shares a successful control-file read
+            # for at most 50 ms. The preceding unpaused job can finish inside
+            # that window, so wait only for its measured cache deadline before
+            # asserting that a new tiny job observes the external pause.
+            cached=runtime.get('_control_snapshot')
+            if cached is not None:
+                time.sleep(max(0,cached[1]+.051-time.monotonic()))
             runtime.pop('status',None)
             thread=threading.Thread(target=run,daemon=True);thread.start()
             deadline=time.monotonic()+30
