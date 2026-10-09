@@ -9,6 +9,30 @@ Enigma Volunteer Grid is designed to collect the minimum information needed to c
 - Resource preferences such as CPU/GPU contribution percentages.
 - Contribution records: work ranges, validation state, verified units/jobs, compute time, candidate counts, trust score, and timestamps.
 - A last-seen timestamp so the dashboard can distinguish online and offline devices.
+- When the coordinator advertises `device_telemetry_v1`, private performance
+  diagnostics while an enrolled client is contributing:
+  client version and compute backend, CPU/GPU usage with its measurement source
+  and scope, available temperatures, application memory, work/receipt queue
+  lengths, completed work, delivery acknowledgements, and time spent computing,
+  persisting, uploading or requesting work. Unsupported readings are omitted.
+
+The public reference coordinator in this source tree does not advertise the
+diagnostic extension. On a capable deployed coordinator, these diagnostics
+are part of the computation service. They let the
+operator diagnose stalled or underperforming clients without accessing the
+volunteer's screen. Clients sample locally about once per second, aggregate
+five-second intervals, and normally upload every thirty seconds over the
+authenticated coordinator connection. A random runtime session identifier and
+sequence number prevent duplicate packets; they do not identify other apps or
+activities. The diagnostic queue is bounded and may discard old samples when
+offline. Its delivery never takes precedence over computation or saved results.
+
+On the deployed service, detailed diagnostic intervals are retained privately
+for seven days and minute aggregates for thirty days. They are stored
+separately from scientific results
+and do not determine scientific validity, credits or trust. Only the local
+administration interface can read device diagnostics. Public pages do not
+expose individual device traces.
 
 The worker does not upload personal files, browser data, passwords, email addresses, Windows account names, local file paths, GPU UUIDs, hostnames, or arbitrary process information.
 
@@ -21,7 +45,7 @@ The public service may see a source network address transiently as part of norma
 A contributor appears on the public leaderboard only when public credit is enabled. Public leaderboard data is limited to the chosen display name and aggregate contribution statistics.
 
 ## Deletion
-A contributor can request account deletion using the private dashboard credential. Deletion removes the contributor record, devices, submissions, contribution/credit rows, and device audit rows. Completed search ranges remain part of the scientific campaign but their device reference is changed to "deleted".
+A contributor can request account deletion using the private dashboard credential. Deletion removes the contributor record, devices, submissions, contribution/credit rows, device audit rows and private device diagnostics. Completed search ranges remain part of the scientific campaign but their device reference is changed to "deleted". Work-block receipts and sampling evidence needed to preserve scientific consistency may remain with a random replacement identifier; the original device reference and its account association are removed. Uncompleted reserved work becomes available again.
 
 Restricted coordinator recovery backups can retain deleted records for up to
 seven days while the backup task is running. Backups are not public and are
@@ -31,7 +55,7 @@ deletion requests received since that backup before reopening the service.
 
 Uninstalling the Windows app removes the application. Local contributor identity/settings are retained by default so a later reinstall can resume the same identity; the uninstall UI offers an explicit option to delete them too.
 
-## Updates and telemetry
+## Updates
 The application checks signed project releases for updates. There is no advertising SDK, analytics SDK, or behavioral tracking in the client.
 
 ## Security boundary

@@ -34,6 +34,7 @@ def main():
                 "min_worker_version":"0.3.0","rate_limit_per_minute":1000})
     cfgp=tmp/"server.json";cfgp.write_text(json.dumps(cfg),encoding="utf-8")
     env=os.environ.copy();env.update({"GRID_CONFIG":str(cfgp),"GRID_DATA_DIR":str(tmp/"db"),
+                                      "GRID_DB":str(tmp/"db/grid.sqlite3"),
                                       "GRID_HOST":"127.0.0.1","GRID_PORT":str(port)})
     server=subprocess.Popen([sys.executable,str(ROOT/"server"/"coordinator.py")],
                             cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)

@@ -69,6 +69,35 @@ def main():
                     else:raise AssertionError('Stopped job completed')
         finally:worker.release_shared_constrained(runtime)
         worker.write_control(state,{})
+        runtime.pop('_bounded_gpu_qualification',None)
+        runtime['_qualified_gpu_lane']=True
+        runtime['_bounded_gpu_lane_qualification']=dict(qualified=True,cpu_workers=2,
+            scope=(32,24,'clean',10,10,1,1),dispatch=dispatch)
+        assert worker.prepare_shared_constrained(runtime)
+        gpu=runtime['_shared_gpu_solver']
+        try:
+            with ThreadPoolExecutor(2) as callers:
+                cpu=callers.submit(worker.run_constrained,lease,runtime,state,'cpu')
+                accelerated=callers.submit(worker.run_constrained,lease,runtime,state,'gpu')
+                assert cpu.result()==expected and accelerated.result()==expected
+            assert runtime['_shared_gpu_solver'] is gpu and not gpu.failed and gpu.budget.calls>0
+            assert runtime['resource']=='CPU + GPU'
+            runtime['settings']['gpu_percent']=0
+            assert worker.run_constrained(lease,runtime,state,'gpu')==expected
+            assert 'safe fallback' in runtime['bounded_backend']
+            runtime['settings']['gpu_percent']=100
+            runtime['_bounded_gpu_lane_qualification']['scope']=(99,24,'clean',10,10,1,1)
+            assert worker.run_constrained(lease,runtime,state,'gpu')==expected
+            assert 'safe fallback' in runtime['bounded_backend']
+            runtime['_bounded_gpu_lane_qualification']['scope']=(32,24,'clean',10,10,1,1)
+            runtime['_block_stop_event']=threading.Event();runtime['_block_stop_event'].set()
+            try:worker.run_constrained(lease,runtime,state,'gpu')
+            except InterruptedError:pass
+            else:raise AssertionError('Stopped GPU lane returned a receipt')
+            runtime['_block_stop_event'].clear()
+        finally:worker.release_shared_constrained(runtime)
+        runtime.pop('_bounded_gpu_lane_qualification',None)
+        runtime['_qualified_gpu_lane']=False
         runtime['_bounded_gpu_qualification']=dict(qualified=True,cpu_workers=2,
             scope=(32,24,'clean',10,10,1,1),dispatch=dispatch,gpu_cores=16)
         assert worker.prepare_shared_constrained(runtime)
@@ -81,8 +110,19 @@ def main():
             assert runtime['bounded_backend']=='CPU + Vulkan bounded solver'
             assert '_constrained_hybrid' not in runtime,'Per-job owner leaked into global state'
         finally:worker.release_shared_constrained(runtime)
+        runtime.pop('_bounded_gpu_qualification',None)
+        def broken_dispatch(_):raise RuntimeError('Synthetic backend failure')
+        runtime['_bounded_gpu_lane_qualification']=dict(qualified=True,cpu_workers=2,
+            scope=(32,24,'clean',10,10,1,1),dispatch=broken_dispatch)
+        assert worker.prepare_shared_constrained(runtime)
+        try:
+            assert worker.run_constrained(lease,runtime,state,'gpu')==expected
+            assert runtime['_shared_gpu_solver'].failed
+            assert 'Vulkan lane failed' in runtime['bounded_gpu_reason']
+            assert worker.run_constrained(lease,runtime,state,'gpu')==expected
+        finally:worker.release_shared_constrained(runtime)
     assert not multiprocessing.active_children()
-    print('PASS worker shared 1/2/4 receipt parity, process cap, live quota, stop while paused and shared GPU routing (CPU dispatch double)')
+    print('PASS worker shared 1/2/4 receipt parity, process cap, live quota, stop, hybrid and independent GPU job lane with GPU-off/scope fallback')
 
 
 if __name__=='__main__':main()

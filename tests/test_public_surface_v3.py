@@ -28,6 +28,7 @@ def main():
                 "registration_code":"","rate_limit_per_minute":1000})
     cfgp=tmp/"server.json";cfgp.write_text(json.dumps(cfg))
     env=os.environ.copy();env.update({"GRID_CONFIG":str(cfgp),"GRID_DATA_DIR":str(tmp/"state"),
+                                      "GRID_DB":str(tmp/"state/grid.sqlite3"),
                                       "GRID_HOST":"127.0.0.1","GRID_PORT":str(port)})
     proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"coordinator.py")],
                           cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

@@ -133,7 +133,8 @@ def main():
         cfg=json.loads((ROOT/'config/server.example.json').read_text());cfg.update(port=port,registration_open=True,
              registration_code='',registration_pow_bits=12,min_worker_version='0.4.0')
         cfgfile=tmp/'server.json';cfgfile.write_text(json.dumps(cfg))
-        env=os.environ.copy();env.update(GRID_CONFIG=str(cfgfile),GRID_DATA_DIR=str(tmp/'db'),GRID_PORT=str(port),GRID_HOST='127.0.0.1')
+        env=os.environ.copy();env.update(GRID_CONFIG=str(cfgfile),GRID_DATA_DIR=str(tmp/'db'),
+                                         GRID_DB=str(tmp/'db/grid.sqlite3'),GRID_PORT=str(port),GRID_HOST='127.0.0.1')
         server=subprocess.Popen([sys.executable,str(ROOT/'server/coordinator.py')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         base=f'http://127.0.0.1:{port}'
         def ready():

@@ -17,8 +17,8 @@ def work(value):
 
 
 def main():
-    with ConcurrentProcessMaps(2, chunk_size=2) as owner:
-        for lanes in (1, 2, 4):
+    with ConcurrentProcessMaps(2, max_searches=5, chunk_size=2) as owner:
+        for lanes in (1, 2, 4, 5):
             barrier = threading.Barrier(lanes)
             def search():
                 barrier.wait(timeout=10)
@@ -72,7 +72,7 @@ def main():
             else:
                 raise AssertionError('Closed search completed unexpectedly')
     assert not multiprocessing.active_children(), 'Worker process leaked'
-    print('PASS 1/2/4 searches, shared process bound, isolated cancellation, pause/resume and close')
+    print('PASS 1/2/4/5 searches, shared process bound, isolated cancellation, pause/resume and close')
 
 
 if __name__ == '__main__':

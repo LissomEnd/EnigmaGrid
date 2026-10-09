@@ -5,6 +5,7 @@ and receipt persistence share one write, so restart cannot skip an unsaved resul
 """
 import copy
 import json
+import math
 import threading
 import time
 import uuid
@@ -20,8 +21,17 @@ RESULT_RESERVE=2*MAX_BODY_BYTES+4096
 class QueueCapacityError(ValueError):
     """Retry after upload frees space; retain the allocation request for replay."""
 
+class AckCounter:
+    """Session-local count of receipts removed after a durable server ACK."""
+    def __init__(self):self.lock=threading.Lock();self.count=0
+    def add(self,amount):
+        if type(amount) is not int or amount<0:raise ValueError('Invalid ACK count')
+        with self.lock:self.count+=amount
+    def value(self):
+        with self.lock:return self.count
+
 class BlockQueue:
-    def __init__(self,path,owner,load,save,*,grouped=False):
+    def __init__(self,path,owner,load,save,*,grouped=False,ack_counter=None):
         self.max_pending=64 if grouped else MAX_PENDING
         self.path=Path(path);self.owner={k:owner[k] for k in ('server','device_id')}
         self.load=load;self.save=save;self.lock=threading.RLock()
@@ -29,6 +39,10 @@ class BlockQueue:
         self.computing_block=None
         self.claims=set()
         self.confirmed={}
+        self.ack_counter=ack_counter if ack_counter is not None else AckCounter()
+        # Lifetimes are process-local and monotonic. A persisted wall-clock
+        # timestamp cannot authorize work after restart or a clock change.
+        self.deadlines={}
         self.persistence_seconds=0.0
         self.cached_value=None;self.cached_stamp=None
 
@@ -77,6 +91,9 @@ class BlockQueue:
         # after the atomic durable save succeeds, never before it. File identity
         # checks still detect replacement by recovery or another queue instance.
         self.cached_stamp=self._stamp();self.cached_value=copy.deepcopy(value)
+        # Confirmed receipts are removed by this successful atomic save.
+        # Until then a crash can replay them and no ACK is counted locally.
+        self.ack_counter.add(len(self.confirmed))
         self.confirmed.clear()
 
     def allocation_request(self):
@@ -86,11 +103,20 @@ class BlockQueue:
                 value['allocation_request']=uuid.uuid4().hex;self._write(value)
             return value['allocation_request']
 
-    def allocation_received(self,request_id,block):
+    @staticmethod
+    def _lifetime(seconds):
+        if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<=seconds<=7200:
+            raise ValueError('Invalid block lifetime')
+        return seconds
+
+    def _live(self,identity,headroom=0):
+        return time.monotonic()+headroom<self.deadlines.get(identity,0)
+
+    def allocation_received(self,request_id,block,valid_for_seconds=None,*,observed_at=None):
         with self.lock:
             if self._read().get('allocation_request')!=request_id:
                 raise ValueError('Unexpected allocation response')
-            self.add(block)
+            self.add(block,valid_for_seconds=valid_for_seconds,observed_at=observed_at)
             value=self._read();value.pop('allocation_request',None);self._write(value)
 
     def allocation_retired(self,request_id,block):
@@ -107,13 +133,16 @@ class BlockQueue:
             value.pop('allocation_request',None)
             self._write(value)
 
-    def add(self,block):
+    def add(self,block,*,valid_for_seconds=None,observed_at=None):
         validate_block(block)
+        if valid_for_seconds is not None:self._lifetime(valid_for_seconds)
+        deadline=None if valid_for_seconds is None else (time.monotonic() if observed_at is None else observed_at)+valid_for_seconds
         with self.lock:
             value=self._read()
             for item in value['blocks']:
                 if item['block']['block_id']==block['block_id']:
                     if item['block']!=block:raise ValueError('Conflicting replayed block')
+                    if deadline is not None:self.deadlines[block['block_id']]=deadline
                     return
             # Keep completed descriptors while their receipts await acknowledgement.
             pending_ids={x['block_id'] for x in value['pending']}
@@ -122,13 +151,14 @@ class BlockQueue:
                 raise QueueCapacityError('Current and next blocks already reserved')
             value['blocks'].append(dict(block=copy.deepcopy(block),next=block['start_unit']))
             self._write(value)
+            if deadline is not None:self.deadlines[block['block_id']]=deadline
 
     def qualification_sample(self):
         """Read-only sample; qualification never advances or claims grid work."""
         with self.lock:
             if self.computing_block is not None or self.claims:return []
             for item in self._read(copy_value=False)['blocks']:
-                if item.get('retiring') or time.time()+120>=item.get('expires_local',float('inf')):continue
+                if item.get('retiring') or not self._live(item['block']['block_id'],120):continue
                 if item['block']['end_unit']-item['next']>=12:
                     return [unit_envelope(item['block'],item['next']+i) for i in range(12)]
             return []
@@ -140,7 +170,7 @@ class BlockQueue:
             if len(value['pending'])>=self.max_pending:return None
             if len(json.dumps(value,allow_nan=False).encode())+RESULT_RESERVE>MAX_BYTES:return None
             for item in value['blocks']:
-                if not item.get('retiring') and time.time()<item.get('expires_local',float('inf')) and item['next']<item['block']['end_unit']:
+                if not item.get('retiring') and self._live(item['block']['block_id']) and item['next']<item['block']['end_unit']:
                     self.reserved_bytes=RESULT_RESERVE
                     self.computing_block=item['block']['block_id']
                     return item['block']['block_id'],unit_envelope(item['block'],item['next'])
@@ -154,7 +184,7 @@ class BlockQueue:
         return self._claim(lanes,2*lanes)
 
     def _claim(self,lanes,window):
-        if type(lanes) is not int or lanes not in (1,2,4):raise ValueError('Compute lanes must be 1, 2 or 4')
+        if type(lanes) is not int or lanes not in (1,2,3,4):raise ValueError('Compute lanes must be 1..4')
         with self.lock:
             if self.computing_block is not None or len(self.claims)>=window:return None
             value=self._read(copy_value=False)
@@ -162,7 +192,7 @@ class BlockQueue:
             if len(json.dumps(value,allow_nan=False).encode())+self.reserved_bytes+RESULT_RESERVE>MAX_BYTES:return None
             for item in value['blocks']:
                 identity=item['block']['block_id'];cursor=item['next'];unit=cursor
-                if item.get('retiring') or time.time()>=item.get('expires_local',float('inf')):continue
+                if item.get('retiring') or not self._live(identity):continue
                 completed=set(item.get('completed_ahead',[]));end=item['block']['end_unit']
                 while unit<end and ((identity,unit) in self.claims or unit in completed):unit+=1
                 if unit<end and unit-cursor<self.max_pending:
@@ -213,7 +243,7 @@ class BlockQueue:
         """Read aggregate counts without copying complete receipt payloads."""
         with self.lock:
             value=self._read(copy_value=False)
-            items=[x for x in value['blocks'] if not x.get('retiring') and x['next']<x['block']['end_unit']]
+            items=[x for x in value['blocks'] if not x.get('retiring') and self._live(x['block']['block_id']) and x['next']<x['block']['end_unit']]
             remaining=sum(x['block']['end_unit']-x['next']-len(x.get('completed_ahead',[])) for x in items)
             running=sum(1 for identity,_ in self.claims if any(x['block']['block_id']==identity for x in items))
             return dict(outbox_count=len(value['pending']),expired_results=len(value.get('expired_receipts',[])),
@@ -251,13 +281,17 @@ class BlockQueue:
                 for row in value['pending']:
                     if row['block_id']==block_id and row['unit'] in accepted:
                         self.confirmed[(block_id,row['unit'])]=copy.deepcopy(row)
-                return
+                return 0
+            before=len(value['pending'])
             value['pending']=[x for x in value['pending'] if not(x['block_id']==block_id and x['unit'] in accepted)]
+            removed=before-len(value['pending'])
             self._write(value)
+            self.ack_counter.add(removed)
+            return removed
 
     def remaining(self):
         with self.lock:
-            items=[x for x in self._read(copy_value=False)['blocks'] if not x.get('retiring') and x['next']<x['block']['end_unit']]
+            items=[x for x in self._read(copy_value=False)['blocks'] if not x.get('retiring') and self._live(x['block']['block_id']) and x['next']<x['block']['end_unit']]
             return sum(x['block']['end_unit']-x['next']-len(x.get('completed_ahead',[])) for x in items),len(items)
 
     def retire(self):
@@ -283,19 +317,25 @@ class BlockQueue:
             if any(x['block_id']==identity for x in value['pending']):raise ValueError('Unsent block results')
             value['blocks']=[x for x in value['blocks'] if x['block']['block_id']!=identity]
             self._write(value)
+            self.deadlines.pop(identity,None)
 
     def identities(self):
         with self.lock:return [x['block']['block_id'] for x in self._read(copy_value=False)['blocks']]
 
-    def update_status(self,states):
+    def update_status(self,states,*,observed_at=None):
         with self.lock:
             value=self._read()
+            deadlines={}
+            origin=time.monotonic() if observed_at is None else observed_at
             for item in value['blocks']:
                 status=states.get(item['block']['block_id'])
                 # A prefetch can add a block while the status request is in flight.
                 # The transport validates completeness against its requested IDs;
                 # leave newly added blocks to their own status response.
                 if status is None:continue
-                item['expires_local']=time.time()+status['valid_for_seconds']
+                seconds=self._lifetime(status['valid_for_seconds'])
+                deadlines[item['block']['block_id']]=origin+seconds
+                item.pop('expires_local',None)
                 if status['status']!='reserved':item['retiring']=True
             self._write(value)
+            self.deadlines.update(deadlines)

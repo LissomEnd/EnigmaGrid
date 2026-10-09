@@ -5,6 +5,7 @@ fabricated and failure to read telemetry never stops the coordinator.
 """
 import ctypes
 import os
+import re
 import threading
 import time
 
@@ -89,6 +90,7 @@ class AmdAdlTelemetry:
             "cpu_temp_c":max(cpu) if cpu else None,
             "gpu_temp_c":max(gpu_temps) if gpu_temps else None,
             "sensor_provider":"AMD ADL" if (gpu_activity or cpu or gpu_temps) else None,
+            "gpu_util_provider":"AMD ADL" if gpu_activity else None,
         }
 
     def close(self):
@@ -103,12 +105,148 @@ class AmdAdlTelemetry:
     def __del__(self):
         self.close()
 
+class _NvmlUtilization(ctypes.Structure):
+    _fields_=[('gpu',ctypes.c_uint),('memory',ctypes.c_uint)]
+
+class NvidiaNvmlTelemetry:
+    """NVIDIA device-wide utilization and temperature via the driver API."""
+    def __init__(self):
+        self.dll=None;self.handles=[];self._lock=threading.Lock()
+        if os.name!='nt':return
+        try:
+            dll=ctypes.WinDLL('nvml.dll')
+            init=dll.nvmlInit_v2;init.argtypes=[];init.restype=ctypes.c_int
+            shutdown=dll.nvmlShutdown;shutdown.argtypes=[];shutdown.restype=ctypes.c_int
+            count_fn=dll.nvmlDeviceGetCount_v2
+            count_fn.argtypes=[ctypes.POINTER(ctypes.c_uint)];count_fn.restype=ctypes.c_int
+            handle_fn=dll.nvmlDeviceGetHandleByIndex_v2
+            handle_fn.argtypes=[ctypes.c_uint,ctypes.POINTER(ctypes.c_void_p)];handle_fn.restype=ctypes.c_int
+            utilization=dll.nvmlDeviceGetUtilizationRates
+            utilization.argtypes=[ctypes.c_void_p,ctypes.POINTER(_NvmlUtilization)];utilization.restype=ctypes.c_int
+            temperature=dll.nvmlDeviceGetTemperature
+            temperature.argtypes=[ctypes.c_void_p,ctypes.c_uint,ctypes.POINTER(ctypes.c_uint)];temperature.restype=ctypes.c_int
+            if init()!=0:return
+            self.dll=dll
+            count=ctypes.c_uint()
+            if count_fn(ctypes.byref(count))!=0:return
+            for index in range(min(count.value,16)):
+                handle=ctypes.c_void_p()
+                if handle_fn(index,ctypes.byref(handle))==0:self.handles.append(handle)
+        except (OSError,AttributeError):
+            self.close()
+
+    def sample(self):
+        if self.dll is None:return {}
+        activity=[];temperatures=[]
+        with self._lock:
+            for handle in self.handles:
+                utilization=_NvmlUtilization();temperature=ctypes.c_uint()
+                try:
+                    if self.dll.nvmlDeviceGetUtilizationRates(handle,ctypes.byref(utilization))==0 and utilization.gpu<=100:
+                        activity.append(float(utilization.gpu))
+                    if self.dll.nvmlDeviceGetTemperature(handle,0,ctypes.byref(temperature))==0 and temperature.value<=150:
+                        temperatures.append(float(temperature.value))
+                except (OSError,AttributeError):continue
+        return {'gpu_percent':max(activity) if activity else None,
+                'gpu_temp_c':max(temperatures) if temperatures else None,
+                'sensor_provider':'NVIDIA NVML' if temperatures else None,
+                'gpu_util_provider':'NVIDIA NVML' if activity else None}
+
+    def close(self):
+        if self.dll is not None:
+            try:self.dll.nvmlShutdown()
+            except (OSError,AttributeError):pass
+        self.dll=None;self.handles=[]
+
+    def __del__(self):self.close()
+
 class HardwareTelemetry:
     def __init__(self):
         self.amd=AmdAdlTelemetry()
+        self.nvidia=NvidiaNvmlTelemetry()
+        self.gpu_engines=WindowsGpuEngineTelemetry()
     def sample(self):
         values=self.amd.sample()
+        nvidia=self.nvidia.sample()
+        for key,value in nvidia.items():
+            if value is not None:values[key]=value
+        if values.get('gpu_percent') is not None:
+            values['gpu_metric_scope']='device'
+        if values.get('gpu_percent') is None:
+            gpu=self.gpu_engines.sample()
+            if gpu is not None:
+                values['gpu_percent']=gpu
+                values['gpu_util_provider']='Windows GPU Engine'
+                values['gpu_metric_scope']='system'
         return {k:v for k,v in values.items() if v is not None}
+
+    def close(self):
+        # The owner joins its sampling thread before calling this method.
+        # Native providers must not be finalized by __del__ during shutdown.
+        for provider in (self.gpu_engines,self.nvidia,self.amd):
+            provider.close()
+
+
+class _PdhFormatted(ctypes.Structure):
+    _fields_=[('status',ctypes.c_ulong),('value',ctypes.c_double)]
+
+
+class _PdhItem(ctypes.Structure):
+    _fields_=[('name',ctypes.c_wchar_p),('value',_PdhFormatted)]
+
+
+def gpu_engine_percent(items):
+    """Aggregate per-process counters by physical engine, then show the busiest."""
+    engines={}
+    for name,percent in items:
+        match=re.search(r'_luid_(.+?)_phys_(\d+)_eng_(\d+)_engtype_([^#]+)',name,re.I)
+        if match is None or not 0<=percent<=100:continue
+        key=match.groups()
+        engines[key]=engines.get(key,0.0)+percent
+    return round(min(100.0,max(engines.values())),2) if engines else None
+
+
+class WindowsGpuEngineTelemetry:
+    """Read the Windows GPU Engine performance counter without a shell process."""
+    def __init__(self):
+        self.dll=None;self.query=ctypes.c_void_p();self.counter=ctypes.c_void_p()
+        if os.name!='nt':return
+        try:
+            dll=ctypes.WinDLL('pdh')
+            dll.PdhOpenQueryW.argtypes=[ctypes.c_wchar_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_void_p)]
+            dll.PdhAddEnglishCounterW.argtypes=[ctypes.c_void_p,ctypes.c_wchar_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_void_p)]
+            dll.PdhCollectQueryData.argtypes=[ctypes.c_void_p]
+            dll.PdhGetFormattedCounterArrayW.argtypes=[ctypes.c_void_p,ctypes.c_ulong,ctypes.POINTER(ctypes.c_ulong),ctypes.POINTER(ctypes.c_ulong),ctypes.c_void_p]
+            dll.PdhCloseQuery.argtypes=[ctypes.c_void_p]
+            if dll.PdhOpenQueryW(None,0,ctypes.byref(self.query))!=0:return
+            if dll.PdhAddEnglishCounterW(self.query,r'\GPU Engine(*)\Utilization Percentage',0,ctypes.byref(self.counter))!=0:
+                dll.PdhCloseQuery(self.query);self.query=ctypes.c_void_p();return
+            if dll.PdhCollectQueryData(self.query)!=0:
+                dll.PdhCloseQuery(self.query);self.query=ctypes.c_void_p();return
+            self.dll=dll
+        except Exception:
+            self.close()
+
+    def sample(self):
+        if self.dll is None:return None
+        try:
+            if self.dll.PdhCollectQueryData(self.query)!=0:return None
+            size,count=ctypes.c_ulong(),ctypes.c_ulong()
+            self.dll.PdhGetFormattedCounterArrayW(self.counter,0x200,ctypes.byref(size),ctypes.byref(count),None)
+            if not 0<size.value<=1024*1024 or count.value>8192:return None
+            buffer=ctypes.create_string_buffer(size.value)
+            if self.dll.PdhGetFormattedCounterArrayW(self.counter,0x200,ctypes.byref(size),ctypes.byref(count),buffer)!=0:return None
+            rows=ctypes.cast(buffer,ctypes.POINTER(_PdhItem))
+            return gpu_engine_percent((rows[i].name,rows[i].value.value) for i in range(count.value) if rows[i].value.status==0)
+        except Exception:return None
+
+    def close(self):
+        if self.dll is not None and self.query:
+            try:self.dll.PdhCloseQuery(self.query)
+            except Exception:pass
+        self.dll=None;self.query=ctypes.c_void_p()
+
+    def __del__(self):self.close()
 
 
 class SystemTelemetry(HardwareTelemetry):
@@ -137,15 +275,20 @@ class SystemTelemetry(HardwareTelemetry):
                 values['available_gb']=round(memory.available/1024**3,2)
         except Exception:pass
         try:values['cpu_percent']=self.process_cpu.sample()
-        except Exception:values['cpu_percent']=None
-        values['gpu_metric_scope']='system'
+        except Exception:
+            values['cpu_percent']=None
+            self.process_cpu.memory_bytes=None
+        if values['cpu_percent'] is not None:values['cpu_util_provider']='Win32 process tree'
+        if self.process_cpu.memory_bytes is not None:
+            values['memory_bytes']=self.process_cpu.memory_bytes
+        values.setdefault('gpu_metric_scope','unknown')
         values['time']=time.time()
         return values
 
 
 class ProcessTreeCpu:
     """Read-only aggregate CPU time for this worker and its descendants."""
-    def __init__(self):self.previous={};self.at=None
+    def __init__(self):self.previous={};self.at=None;self.memory_bytes=None
     def sample(self):
         if os.name!='nt':return None
         from ctypes import wintypes as w
@@ -157,6 +300,14 @@ class ProcessTreeCpu:
         k.CloseHandle.argtypes=[w.HANDLE]
         k.OpenProcess.argtypes=[w.DWORD,w.BOOL,w.DWORD];k.OpenProcess.restype=w.HANDLE
         k.GetProcessTimes.argtypes=[w.HANDLE]+[ctypes.POINTER(ctypes.c_ulonglong)]*4
+        class MemoryCounters(ctypes.Structure):
+            _fields_=[('size',w.DWORD),('page_faults',w.DWORD)]+[(name,ctypes.c_size_t) for name in
+                ('peak_working','working','peak_paged','paged','peak_nonpaged','nonpaged','pagefile','peak_pagefile')]
+        try:
+            psapi=ctypes.WinDLL('psapi',use_last_error=True)
+            psapi.GetProcessMemoryInfo.argtypes=[w.HANDLE,ctypes.POINTER(MemoryCounters),w.DWORD]
+            psapi.GetProcessMemoryInfo.restype=w.BOOL
+        except (OSError,AttributeError):psapi=None
         snapshot=k.CreateToolhelp32Snapshot(2,0)
         if snapshot==ctypes.c_void_p(-1).value:return None
         parents={};entry=Entry();entry.size=ctypes.sizeof(entry)
@@ -170,14 +321,20 @@ class ProcessTreeCpu:
             found={pid for pid,parent in parents.items() if parent in descendants}
             if found<=descendants:break
             descendants.update(found)
-        current={}
+        current={};memory=0;memory_found=False
         for pid in descendants:
             handle=k.OpenProcess(0x1000,False,pid)
             if not handle:continue
             try:
                 created,exited,kernel,user=(ctypes.c_ulonglong() for _ in range(4))
                 if k.GetProcessTimes(handle,*[ctypes.byref(x) for x in (created,exited,kernel,user)]):current[(pid,created.value)]=(kernel.value+user.value)/1e7
+                counters=MemoryCounters();counters.size=ctypes.sizeof(counters)
+                try:
+                    if psapi is not None and psapi.GetProcessMemoryInfo(handle,ctypes.byref(counters),counters.size):
+                        memory+=counters.working;memory_found=True
+                except OSError:pass
             finally:k.CloseHandle(handle)
+        self.memory_bytes=memory if memory_found else None
         now=time.monotonic();value=None
         if self.at is not None and now>self.at:
             seconds=sum(max(0,total-self.previous[key]) for key,total in current.items() if key in self.previous)

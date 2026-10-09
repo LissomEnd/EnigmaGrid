@@ -127,7 +127,7 @@ class ConcurrentProcessMaps:
     """
     def __init__(self,workers,max_searches=4,chunk_size=8):
         if type(workers) is not int or not 1<=workers<=32:raise ValueError('Invalid process count')
-        if type(max_searches) is not int or max_searches not in (1,2,4):raise ValueError('Invalid search count')
+        if type(max_searches) is not int or max_searches not in (1,2,4,5):raise ValueError('Invalid search count')
         if type(chunk_size) is not int or not 1<=chunk_size<=32:raise ValueError('Invalid chunk size')
         if os.name=='nt':
             from search.windows_spawn import HiddenSpawnContext

@@ -15,16 +15,20 @@ struct Compute {
     VkBuffer buffers[2]{};VkDeviceMemory memory[2]{};bool coherent[2]{};VkShaderModule shader{};
     VkDescriptorSetLayout layout{};VkPipelineLayout pipelineLayout{};VkPipeline pipeline{};
     VkDescriptorPool descriptors{};VkCommandPool commands{};VkFence fence{};
-    VkDescriptorSet set{};VkCommandBuffer cmd{};bool initialized=false;
+    VkDescriptorSet set{};VkCommandBuffer cmd{};bool initialized=false;uint32_t capacity=0;
+    uint32_t recordedRows=0;
     ~Compute(){
         if(device){vkDeviceWaitIdle(device);if(fence)vkDestroyFence(device,fence,nullptr);if(commands)vkDestroyCommandPool(device,commands,nullptr);if(descriptors)vkDestroyDescriptorPool(device,descriptors,nullptr);if(pipeline)vkDestroyPipeline(device,pipeline,nullptr);if(pipelineLayout)vkDestroyPipelineLayout(device,pipelineLayout,nullptr);if(layout)vkDestroyDescriptorSetLayout(device,layout,nullptr);if(shader)vkDestroyShaderModule(device,shader,nullptr);for(int i=0;i<2;i++){if(buffers[i])vkDestroyBuffer(device,buffers[i],nullptr);if(memory[i])vkFreeMemory(device,memory[i],nullptr);}vkDestroyDevice(device,nullptr);}
         if(instance)vkDestroyInstance(instance,nullptr);
     }
     void buffer(int index,VkDeviceSize bytes){
+        VkPhysicalDeviceProperties limits;vkGetPhysicalDeviceProperties(physical,&limits);
+        if(bytes>limits.limits.maxStorageBufferRange)throw std::runtime_error("GPU cohort storage range unavailable");
         VkBufferCreateInfo b{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};b.size=bytes;b.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;b.sharingMode=VK_SHARING_MODE_EXCLUSIVE;checked(vkCreateBuffer(device,&b,nullptr,&buffers[index]));
         VkMemoryRequirements requirements;vkGetBufferMemoryRequirements(device,buffers[index],&requirements);
         VkPhysicalDeviceMemoryProperties properties;vkGetPhysicalDeviceMemoryProperties(physical,&properties);
         uint32_t type=enigmagrid::hostMemoryType(properties,requirements.memoryTypeBits);
+        if(requirements.size>properties.memoryHeaps[properties.memoryTypes[type].heapIndex].size/2)throw std::runtime_error("GPU cohort memory heap unavailable");
         coherent[index]=(properties.memoryTypes[type].propertyFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)!=0;
         VkMemoryAllocateInfo a{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};a.allocationSize=requirements.size;a.memoryTypeIndex=type;checked(vkAllocateMemory(device,&a,nullptr,&memory[index]));checked(vkBindBufferMemory(device,buffers[index],memory[index],0));
     }
@@ -44,7 +48,8 @@ struct Compute {
         float priority=0.25f;VkDeviceQueueCreateInfo q{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};q.queueFamilyIndex=family;q.queueCount=1;q.pQueuePriorities=&priority;
         VkDeviceCreateInfo d{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};d.queueCreateInfoCount=1;d.pQueueCreateInfos=&q;checked(vkCreateDevice(physical,&d,nullptr,&device));vkGetDeviceQueue(device,family,0,&queue);
         // Fixed bounded capacity supports every accepted row length without reallocations.
-        const VkDeviceSize inputBytes=(625+16*72*9)*4,outputBytes=16*72*26*4;buffer(0,inputBytes);buffer(1,outputBytes);
+        capacity=input[0]>128*72?512*72:128*72;
+        const VkDeviceSize inputBytes=(625+capacity*9)*4,outputBytes=capacity*26*4;buffer(0,inputBytes);buffer(1,outputBytes);
         VkShaderModuleCreateInfo s{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};s.codeSize=code.size()*4;s.pCode=code.data();checked(vkCreateShaderModule(device,&s,nullptr,&shader));
         VkDescriptorSetLayoutBinding bindings[2]{};for(int i=0;i<2;i++){bindings[i].binding=i;bindings[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;bindings[i].descriptorCount=1;bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT;}
         VkDescriptorSetLayoutCreateInfo l{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};l.bindingCount=2;l.pBindings=bindings;checked(vkCreateDescriptorSetLayout(device,&l,nullptr,&layout));
@@ -61,10 +66,17 @@ struct Compute {
         }
         const VkDeviceSize inputBytes=input.size()*4,outputBytes=input[0]*26*4;
         enigmagrid::uploadHost(device,memory[0],coherent[0],input.data(),inputBytes);
-        checked(vkResetCommandPool(device,commands,0));checked(vkResetFences(device,1,&fence));
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};begin.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;checked(vkBeginCommandBuffer(cmd,&begin));
+        // Persistent buffers and descriptors allow a completed command buffer
+        // to be submitted again for the same row count. Re-record only when
+        // the dispatch size changes; input data is uploaded every time.
+        if(recordedRows!=input[0]){
+        checked(vkResetCommandPool(device,commands,0));
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};checked(vkBeginCommandBuffer(cmd,&begin));
         vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipelineLayout,0,1,&set,0,nullptr);vkCmdDispatch(cmd,(input[0]*26+63)/64,1,1);
         VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};barrier.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;barrier.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&barrier,0,nullptr,0,nullptr);checked(vkEndCommandBuffer(cmd));
+        recordedRows=input[0];
+        }
+        checked(vkResetFences(device,1,&fence));
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;checked(vkQueueSubmit(queue,1,&submit,fence));checked(vkWaitForFences(device,1,&fence,VK_TRUE,5000000000ULL));
         std::vector<uint32_t> output(input[0]*26);enigmagrid::downloadHost(device,memory[1],coherent[1],output.data(),outputBytes);return output;
     }
@@ -79,12 +91,12 @@ Java_org_enigmagrid_android_VulkanBackend_rowsNative(JNIEnv* env,jclass,jintArra
     std::lock_guard<std::mutex> lock(computeMutex);
     try{
         if(!packed||!spirv)throw std::runtime_error("Missing GPU input");
-        jsize n=env->GetArrayLength(packed),bytes=env->GetArrayLength(spirv);if(n<634||n>(625+16*72*9)||bytes<20||bytes>1024*1024||bytes%4)throw std::runtime_error("Invalid GPU buffer size");
+        jsize n=env->GetArrayLength(packed),bytes=env->GetArrayLength(spirv);if(n<634||n>(625+512*72*9)||bytes<20||bytes>1024*1024||bytes%4)throw std::runtime_error("Invalid GPU buffer size");
         std::vector<uint32_t> input(n),code(bytes/4);env->GetIntArrayRegion(packed,0,n,reinterpret_cast<jint*>(input.data()));env->GetByteArrayRegion(spirv,0,bytes,reinterpret_cast<jbyte*>(code.data()));
-        if(input[0]<1||input[0]>16*72||n!=625+input[0]*9||code[0]!=0x07230203)throw std::runtime_error("Invalid GPU layout");
+        if(input[0]<1||input[0]>512*72||n!=625+input[0]*9||code[0]!=0x07230203)throw std::runtime_error("Invalid GPU layout");
         for(size_t i=1;i<625;i++)if(input[i]>25)throw std::runtime_error("Invalid contact");
         for(size_t i=625;i<input.size();i++)if(input[i]>=((i-625)%9<5?12u:26u))throw std::runtime_error("Invalid rotor descriptor");
-        if(!cachedCompute||cachedCode!=code){cachedCompute.reset(new Compute());cachedCode=code;}
+        if(!cachedCompute||cachedCode!=code||input[0]>cachedCompute->capacity){cachedCompute.reset(new Compute());cachedCode=code;}
         auto output=cachedCompute->run(input,code);jintArray result=env->NewIntArray(output.size());if(result)env->SetIntArrayRegion(result,0,output.size(),reinterpret_cast<jint*>(output.data()));return result;
     }catch(const std::exception& error){cachedCompute.reset();cachedCode.clear();env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),error.what());return nullptr;}
 }

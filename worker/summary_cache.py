@@ -21,14 +21,16 @@ def read_cached_summary(state_path, version):
 
 
 class SummaryPublisher:
-    def __init__(self,state_path,version,fetch):
+    def __init__(self,state_path,version,fetch,*,cancel_aware=False):
         self.path=Path(state_path);self.version=version;self.fetch=fetch
+        self.cancel_aware=cancel_aware
         self.stop=threading.Event()
-        self.thread=threading.Thread(target=self.run,name='ui-summary',daemon=True)
+        self.thread=threading.Thread(target=self.run,name='ui-summary')
 
     def publish(self):
         before=identity(self.path)
-        summary=self.fetch(self.path)
+        summary=(self.fetch(self.path,self.stop) if self.cancel_aware
+                 else self.fetch(self.path))
         if self.stop.is_set() or identity(self.path)!=before:return
         record={'created':time.time(),'version':self.version,'identity':before,'summary':summary}
         atomic_write(self.path.with_name('client-summary-cache.json'),json.dumps(record).encode('utf-8'))
@@ -43,4 +45,9 @@ class SummaryPublisher:
 
     def close(self):
         self.stop.set()
-        self.thread.join(timeout=1)
+        # The normal fetch can perform two sequential 10-second HTTP calls.
+        # Do not leave a daemon performing I/O at interpreter shutdown.
+        if self.thread.ident is not None:
+            self.thread.join(timeout=23)
+            if self.thread.is_alive():
+                raise RuntimeError('Summary publisher did not terminate')

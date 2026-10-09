@@ -62,6 +62,7 @@ def main():
     cfg_path=tmp/"server.json";cfg_path.write_text(json.dumps(cfg),encoding="utf-8")
     env=os.environ.copy()
     env.update({"GRID_CONFIG":str(cfg_path),"GRID_DATA_DIR":str(tmp/"state"),
+                "GRID_DB":str(tmp/"state/grid.sqlite3"),
                 "GRID_HOST":"127.0.0.1","GRID_PORT":str(port)})
     proc=subprocess.Popen([sys.executable,str(ROOT/"server"/"coordinator.py")],
                           cwd=ROOT,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
@@ -91,11 +92,15 @@ def main():
                      a["device_token"])
         assert hb["ok"] and not hb["update_required"]
         lease_response=http_json(base+"/api/lease","POST",{"meta":{}},a["device_token"])
+        assert lease_response["settings"]==hb["settings"]
+        assert lease_response["enabled"] and not lease_response["quarantined"]
+        assert lease_response["trust_score"]==hb["trust_score"]
         la=lease_response.get("lease")
         assert la and la["segment_id"]=="it-seg" and la["purpose"]=="primary",lease_response
         previous_id=la['id']
         http_json(base+'/api/device/settings','POST',{'settings':{'cpu_percent':0,'gpu_percent':0}},a['device_token'])
-        assert http_json(base+'/api/lease','POST',{},a['device_token'])['lease'] is None
+        stopped=http_json(base+'/api/lease','POST',{},a['device_token'])
+        assert stopped['lease'] is None and stopped['settings']['cpu_percent']==0
         http_json(base+'/api/device/settings','POST',{'settings':{'cpu_percent':50,'gpu_percent':0}},a['device_token'])
         replacement=http_json(base+'/api/lease','POST',{},a['device_token'])['lease']
         assert replacement['id']!=previous_id
@@ -123,6 +128,42 @@ def main():
         done=con.execute("select count(*) from done_ranges").fetchone()[0]
         con.close()
         assert credits==2 and done==1
+        caps=http_json(base+'/api/capabilities')
+        assert caps['max_completion_count']==8 and caps['max_lease_count']==32
+        duplicate={'lease_id':la['id'],'work_token':la['work_token'],'result':result,'compute_seconds':1}
+        batch=http_json(base+'/api/completions','POST',{'submissions':[duplicate,{'lease_id':'missing','work_token':'bad'}]},a['device_token'])
+        assert [x['status'] for x in batch['results']]==[200,403]
+        assert batch['results'][0]['result']['duplicate']
+        # Release only owned, unstarted reservations; replay never duplicates requeue.
+        lc=http_json(base+'/api/lease','POST',{},a['device_token'])['lease']
+        release={'leases':[{'lease_id':lc['id'],'work_token':lc['work_token']}]}
+        try:http_json(base+'/api/leases/release','POST',release,b['device_token'])
+        except urllib.error.HTTPError as e:assert e.code==400
+        else:raise AssertionError('Cross-device release accepted')
+        assert http_json(base+'/api/leases/release','POST',release,a['device_token'])['released']==[lc['id']]
+        assert http_json(base+'/api/leases/release','POST',release,a['device_token'])['released']==[]
+        replacement=http_json(base+'/api/lease','POST',{},a['device_token'])['lease']
+        assert replacement['id']!=lc['id'] and replacement['start_unit']==lc['start_unit']
+        r=demo_result(replacement['segment_id'],replacement['start_unit'],replacement['end_unit'],20)
+        batch=http_json(base+'/api/completions','POST',{'submissions':[{'lease_id':replacement['id'],'work_token':replacement['work_token'],'result':r,'compute_seconds':1},duplicate]},a['device_token'])
+        assert all(x['status']==200 for x in batch['results'])
+        assert batch['results'][0]['result']['validation_status'].startswith('pending')
+        assert http_json(base+'/api/leases/release','POST',{'leases':[{'lease_id':replacement['id'],'work_token':replacement['work_token']}]},a['device_token'])['released']==[]
+        # Control snapshots must also be present on refusal paths, so the worker
+        # never needs an extra heartbeat merely to discover a disabled device.
+        con=sqlite3.connect(db)
+        con.execute("update devices set quarantined=1 where id=?",(a['device_id'],));con.commit()
+        refused=http_json(base+'/api/lease','POST',{},a['device_token'])
+        assert not refused['enabled'] and refused['quarantined'] and refused['lease'] is None
+        assert refused['settings']['cpu_percent']==50
+        con.execute("update devices set quarantined=0,enabled=0 where id=?",(a['device_id'],));con.commit()
+        refused=http_json(base+'/api/lease','POST',{},a['device_token'])
+        assert not refused['enabled'] and not refused['quarantined'] and refused['lease'] is None
+        con.execute("update devices set enabled=1 where id=?",(a['device_id'],));con.commit();con.close()
+        cfg['min_worker_version']='99.0.0';cfg_path.write_text(json.dumps(cfg),encoding='utf-8')
+        required=http_json(base+'/api/lease','POST',{},a['device_token'])
+        assert required['update_required'] and required['lease'] is None
+        assert required['settings']['cpu_percent']==50 and required['enabled']
         print("HTTP_INTEGRATION_V3_OK",{"range":[la["start_unit"],la["end_unit"]],"credits":credits})
     finally:
         proc.terminate()

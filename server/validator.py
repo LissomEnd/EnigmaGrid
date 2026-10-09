@@ -104,7 +104,21 @@ def _event_candidate(c,lease,engine="event_stochastic_v1"):
     return clean
 def validate_result(engine,result,lease,*,allow_experimental=False):
     if not isinstance(result,dict): raise ValueError("result_not_object")
+    if engine=='bounded_crib_v1' and any(k in lease.get('config',{}) for k in ('job','program')) and not allow_experimental:
+        from search.crib_work import validate_receipt_shape,validate_envelope
+        # Intake binds/replays candidates only. Existing replica consensus
+        # confirms the complete receipt; do not search inside the DB transaction.
+        job=validate_envelope(dict(lease,engine=engine))
+        if not isinstance(job,dict) or job.get('budgets',{}).get('candidate_limit',2048)>32:
+            raise ValueError('Production candidate budget exceeds intake bound')
+        clean,_=validate_receipt_shape(dict(lease,engine=engine),result)
+        return clean,fingerprint(clean)
     if engine=="bounded_crib_v1" and allow_experimental:
+        if any(k in lease.get('config',{}) for k in ('job','program')):
+            from search.crib_work import verify_result
+            envelope=dict(lease,engine=engine)
+            clean,_=verify_result(envelope,result)
+            return clean,fingerprint(clean)
         # Only isolated callers opt in. Production HTTP callers leave this
         # disabled; do not perform an experimental search in their request path.
         from search.research_validation import verify

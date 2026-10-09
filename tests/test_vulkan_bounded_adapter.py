@@ -43,7 +43,9 @@ print('PASS native layout, ordered 64+1 batching, full receipt parity, malformed
 from search.vulkan_bounded import HybridSolverMap
 for share in (1,32,64,96,128):
     hybrid=HybridSolverMap(dispatch,map,share)
-    try:assert run(lease,solve_map=hybrid)==run(lease)
+    try:
+        assert run(lease,solve_map=hybrid)==run(lease)
+        assert hybrid.gpu_dispatches>0
     finally:hybrid.close()
 print('PASS hybrid disjoint core shares and full receipt parity')
 
@@ -53,10 +55,12 @@ hybrid=HybridSolverMap(broken,map,32,on_failure=lambda error:failures.append(str
 try:
     assert run(lease,solve_map=hybrid)==run(lease)
     assert run(lease,solve_map=hybrid)==run(lease)
-    assert failures==['native failure'] and hybrid.failed
+    assert failures==['native failure'] and hybrid.failed and hybrid.gpu_dispatches==0
 finally:hybrid.close()
 hybrid=HybridSolverMap(lambda data:(_ for _ in ()).throw(AssertionError('Disabled GPU dispatched')),map,gpu_enabled=lambda:False)
-try:assert run(lease,solve_map=hybrid)==run(lease)
+try:
+    assert run(lease,solve_map=hybrid)==run(lease)
+    assert hybrid.gpu_dispatches==0
 finally:hybrid.close()
 def cpu_stopped(fn,tasks):raise InterruptedError('CPU stop preserved')
 hybrid=HybridSolverMap(broken,cpu_stopped,32)
