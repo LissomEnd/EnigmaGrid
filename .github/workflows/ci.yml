@@ -131,14 +131,22 @@ jobs:
       - name: Public surface test
         run: python tests/test_public_surface_v3.py
       - name: Portable search determinism
+        shell: pwsh
         run: |
           python tests/test_portable_search.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_portable_cohort_parity.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_portable_batch_stage.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_owned_process_termination.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_portable_legacy_telemetry.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_windows_portable_lanes.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_windows_gpu_telemetry.py
+          exit $LASTEXITCODE
       - name: Worker resource and pause controls
         run: python tests/test_worker_controls.py
       - name: Client summary hardware provenance
@@ -148,9 +156,12 @@ jobs:
       - name: Windows state file lock recovery
         run: python tests/test_state_file_locks.py
       - name: Update signature and mandatory policy
+        shell: pwsh
         run: |
           python tests/test_update_integrity.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/test_update_release_selection.py
+          exit $LASTEXITCODE
       - name: Conservative update package retention
         run: python tests/test_update_package_retention.py
       - name: Update feedback and manual retry
