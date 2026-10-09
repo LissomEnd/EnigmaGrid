@@ -3,7 +3,10 @@ package org.enigmagrid.core;
 public final class JobPacing {
  private JobPacing(){}
  public static long delayMillis(boolean acknowledged,long elapsedMillis){
-  // Cap short transactions at one per second to avoid flooding the coordinator.
-  return acknowledged?Math.max(0,1000-Math.max(0,elapsedMillis)):30000;
+  // Successful work immediately continues. Resource duty is enforced by
+  // WorkControl, while HTTP rate limits and failures use transport backoff.
+  // An empty queue may become eligible as soon as another volunteer finishes
+  // an audit. Do not strand newly available work for thirty seconds.
+  return acknowledged?0:1000;
  }
 }

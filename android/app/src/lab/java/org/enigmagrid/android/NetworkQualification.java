@@ -28,6 +28,7 @@ public final class NetworkQualification extends Instrumentation {
             TrustManagerFactory factory=TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());factory.init(trust);
             SSLContext tls=SSLContext.getInstance("TLS");tls.init(null,factory.getTrustManagers(),null);
             CredentialStore store=new CredentialStore(getTargetContext(),true);
+            boolean batch="true".equals(args.getString("batch"));
             boolean resume="resume".equals(args.getString("phase"));
             if(resume){
                 int previous=getTargetContext().getSharedPreferences("lab-restart",0).getInt("pid",-1);
@@ -39,7 +40,7 @@ public final class NetworkQualification extends Instrumentation {
                 if(!resume||i!=0)Enrollment.register(client,store,"Android lab "+i,"",object("cpu_percent",25,"gpu_percent",0,"allow_cpu",true,"allow_gpu",false),()->false);
                 String status;
                 if(i==0){
-                    if(!resume)try{new NetworkWorker(client,store,rows).once(()->false);throw new AssertionError("Expected lost acknowledgement");}catch(IOException expected){if(store.pendingResults().load()==null)throw new AssertionError("Before durable result: "+expected.getClass().getSimpleName()+": "+expected.getMessage());}
+                    if(!resume)try{new NetworkWorker(client,store,rows,batch).once(()->false);throw new AssertionError("Expected lost acknowledgement");}catch(IOException expected){if(store.pendingResults().load()==null)throw new AssertionError("Before durable result: "+expected.getClass().getSimpleName()+": "+expected.getMessage());}
                     if(store.pendingResults().load()==null)throw new AssertionError("Pending receipt lost");
                     if("prepare".equals(args.getString("phase"))){
                         getTargetContext().getSharedPreferences("lab-restart",0).edit().putInt("pid",android.os.Process.myPid()).commit();
@@ -47,13 +48,14 @@ public final class NetworkQualification extends Instrumentation {
                     }
                     // Reopen the real Keystore-backed storage before replay.
                     store=new CredentialStore(getTargetContext(),true);
-                    status=new NetworkWorker(client.fork(),store,rows).once(()->false);
+                    status=new NetworkWorker(client.fork(),store,rows,batch).once(()->false);
                     if(!status.startsWith("Saved result acknowledged"))throw new AssertionError(status);
-                }else status=new NetworkWorker(client,store,rows).once(()->false);
-                if(store.pendingResults().load()!=null)throw new AssertionError("Result not acknowledged");
-                store.clear();store.registrationAttempt().clear();
+                    if(batch)new NetworkWorker(client,store,rows,true).once(()->false);
+                }else status=new NetworkWorker(client,store,rows,batch).once(()->false);
+                if(!((java.util.List<?>)store.pendingResults().load().get("submissions")).isEmpty())throw new AssertionError("Result not acknowledged");
+                store.clear();store.pendingResults().clear();store.registrationAttempt().clear();
             }
-            if(gpu!=null&&dispatches.get()!=(resume?1:2))throw new AssertionError("Expected two GPU core dispatches");
+            if(gpu!=null&&dispatches.get()!=(batch?(resume?15:16):(resume?1:2)))throw new AssertionError("Expected two GPU core dispatches");
             result.putString("result",gpu==null?"PASS_ANDROID_HTTPS_KEYSTORE_REPLAY":"PASS_ANDROID_HTTPS_KEYSTORE_REPLAY_GPU");finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("result","FAIL: "+error.getClass().getSimpleName()+": "+error.getMessage());finish(Activity.RESULT_CANCELED,result);}
     }

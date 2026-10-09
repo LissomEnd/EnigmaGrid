@@ -1,6 +1,7 @@
 """Long-block HTTP transport; execution is independent of these calls."""
 import json
 import math
+import time
 from search.work_block import FORMAT, MAX_BODY_BYTES
 from search.work_result_groups import FORMAT as GROUP_FORMAT
 
@@ -15,6 +16,7 @@ class BlockTransport:
     def allocate(self):
         self.release_ready()
         identity=self.queue.allocation_request()
+        observed_at=time.monotonic()
         response=self.request('/api/work-blocks',dict(format=FORMAT,request_id=identity))
         if not isinstance(response,dict):raise ValueError('Invalid block response')
         block=response.get('block')
@@ -23,8 +25,15 @@ class BlockTransport:
                 self.queue.allocation_retired(identity,block)
                 return dict(block=None,wait_reason='previous_block_finished')
             if response.get('status')!='reserved':raise ValueError('Invalid block reservation state')
-            self.queue.allocation_received(identity,block)
-            self.refresh_status()
+            lifetime=response.get('valid_for_seconds')
+            if lifetime is not None:
+                if type(lifetime) not in (int,float) or not math.isfinite(lifetime) or not 0<=lifetime<=7200:
+                    raise ValueError('Invalid block lifetime')
+            self.queue.allocation_received(identity,block,lifetime,observed_at=observed_at)
+            # A modern coordinator returns authoritative remaining lifetime on
+            # both new and replayed reservations. Older coordinators require the
+            # status round trip before the first unit can safely be claimed.
+            if lifetime is None:self.refresh_status()
         return response
 
     def upload(self):
@@ -72,6 +81,7 @@ class BlockTransport:
     def refresh_status(self):
         identities=self.queue.identities()
         if not identities:return
+        observed_at=time.monotonic()
         response=self.request('/api/work-blocks/status',dict(format=FORMAT,blocks=identities))
         rows=response.get('blocks') if isinstance(response,dict) else None
         if not isinstance(rows,list) or len(rows)!=len(identities):raise ValueError('Invalid block status')
@@ -82,4 +92,4 @@ class BlockTransport:
             if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<=seconds<=7200:raise ValueError('Invalid block lifetime')
             if row.get('status') not in ('reserved','submitted','released','expired'):raise ValueError('Invalid block state')
             states[row['block_id']]=row
-        self.queue.update_status(states)
+        self.queue.update_status(states,observed_at=observed_at)

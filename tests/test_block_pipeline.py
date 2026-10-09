@@ -4,7 +4,9 @@ ROOT=Path(__file__).resolve().parents[1];sys.path[:0]=[str(ROOT/'worker'),str(RO
 from block_pipeline import BlockPipeline
 class Queue:
     def __init__(self):self.count=1;self.finished=0;self.claims=set();self.max_pending=8
-    def remaining(self):return 50000,1
+    # This fixture exercises compute/upload overlap with an already filled
+    # two-reservation window. Initial refill policy is tested separately.
+    def remaining(self):return 50000,2
     def pending(self):return [dict(unit=n) for n in range(self.count)]
     def next_unit(self):return ('block',dict(start_unit=self.finished)) if self.count<8 else None
     def claim_prefetched(self,lanes):
@@ -126,13 +128,13 @@ from block_queue import BlockQueue
 from search.work_block import FORMAT
 from search.crib_work import run
 import worker
-for lanes in (2,4):
+for lanes in (2,3,4):
     with tempfile.TemporaryDirectory() as folder:
         path=Path(folder)/'parallel';owner=dict(server='isolated',device_id='device')
         q=BlockQueue(path,owner,worker.load_state,worker.save_state,grouped=True)
         block=dict(format=FORMAT,block_id='current',engine='bounded_crib_v1',start_unit=0,end_unit=1000,
           config=dict(requires=['cpu','bounded_crib_v1'],program=dict(ciphertext='BDZGO',hypotheses=[dict(text='BD',legal_clean_offsets=[0])],chunk=3,ordinal_base=0,candidate_limit=3)))
-        q.add(block);other=copy.deepcopy(block);other['block_id']='next';q.add(other)
+        q.add(block,valid_for_seconds=7200);other=copy.deepcopy(block);other['block_id']='next';q.add(other,valid_for_seconds=7200)
         together=threading.Barrier(lanes);started=set();lock=threading.Lock()
         def compute(envelope):
             unit=envelope['start_unit']
@@ -143,7 +145,8 @@ for lanes in (2,4):
                 assert p.stop_event.wait(5)
                 raise InterruptedError('Stopped before completion')
             return run(envelope)
-        p=BlockPipeline(q,Transport(),compute,lanes=lanes)
+        p=BlockPipeline(q,Transport(),compute,lanes=lanes,
+                        gpu_execute=compute if lanes==3 else None)
         try:
             assert not p.tick()
             deadline=time.monotonic()+3
@@ -152,6 +155,7 @@ for lanes in (2,4):
         finally:p.close()
         recovered=BlockQueue(path,owner,worker.load_state,worker.save_state,grouped=True)
         assert len(recovered.pending())==2*(lanes-1) and not q.claims and q.reserved_bytes==0
+        recovered.update_status({identity:dict(status='reserved',valid_for_seconds=7200) for identity in recovered.identities()})
         assert recovered.claim_next(lanes)[1]['start_unit']==0
         assert recovered.claim_next(lanes)[1]['start_unit']==lanes
-print('PASS 2/4 concurrent block jobs retain completed receipts on stop and recover only the unfinished gap')
+print('PASS 2/3/4 concurrent block jobs retain completed receipts on stop and recover only the unfinished gap')

@@ -98,3 +98,13 @@ with tempfile.TemporaryDirectory() as tmp:
         assert worker.maybe_qualify_bounded_gpu(state,{},runtime) is False
         assert '100%' in runtime['bounded_backend']
 print('PASS actual low-memory and reduced-slider prerequisites remain deferred without starting a benchmark')
+
+with tempfile.TemporaryDirectory() as tmp:
+    base=Path(tmp);state=base/'client.json'
+    for name in ('worker/native/enigmagrid_solver.dll','worker/native/bounded_solver.spv','solver/runtime/src/search/vulkan_bounded.py'):
+        path=base/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'fixture')
+    runtime={'settings':settings,'enabled':True}
+    with patch.object(worker,'ROOT',base),patch.object(worker,'heartbeat_once',side_effect=OSError('temporary network')):
+        assert worker.maybe_qualify_bounded_gpu(state,{},runtime) is False
+        assert 'deferred' in runtime['bounded_backend']
+print('PASS transient coordinator failures defer Vulkan qualification without permanently settling it')

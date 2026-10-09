@@ -4,11 +4,14 @@ Groups are transport containers, never verification or credit units. Receivers
 must authenticate block ownership and charge every contained unit independently.
 """
 import json
-from search.work_block import FORMAT as BLOCK_FORMAT, MAX_BODY_BYTES, validate_partial_results
+from search.work_block import FORMAT as BLOCK_FORMAT, validate_partial_results
 
 FORMAT = 'bounded_result_groups_v1'
 MAX_GROUPS = 8
 UNITS_PER_GROUP = 8
+# A grouped packet can contain eight individually bounded partial packets.
+# Keep the ordinary partial-result limit in work_block.py unchanged.
+MAX_BODY_BYTES = 768 * 1024
 
 
 def validate_groups(block, payload):

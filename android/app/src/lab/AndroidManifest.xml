@@ -1,7 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <instrumentation android:name="org.enigmagrid.android.StorageQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Isolated durable outbox benchmark" />
     <instrumentation android:name="org.enigmagrid.android.GpuRecoveryQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Isolated GPU recovery qualification" />
     <instrumentation android:name="org.enigmagrid.android.NetworkQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Isolated network qualification" />
     <instrumentation android:name="org.enigmagrid.android.UpdateQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Isolated updater qualification" />
-    <instrumentation android:name="org.enigmagrid.android.UiGpuExclusionQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="UI GPU exclusion qualification" />
+    <instrumentation android:name="org.enigmagrid.android.BatchQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="GPU batch qualification" />
+    <instrumentation android:name="org.enigmagrid.android.UiGpuExclusionQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="GPU UI exclusion qualification" />
     <instrumentation android:name="org.enigmagrid.android.CpuCompatibilityQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="CPU platform compatibility qualification" />
 </manifest>

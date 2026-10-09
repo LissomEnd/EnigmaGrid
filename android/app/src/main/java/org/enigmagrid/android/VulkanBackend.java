@@ -8,4 +8,6 @@ final class VulkanBackend {
     private static native String probeNative();
     static int[] rows(int[] packed,byte[] spirv){if(!loaded)throw new IllegalStateException("Native Vulkan unavailable");return rowsNative(packed,spirv);}
     private static native int[] rowsNative(int[] packed,byte[] spirv);
+    static int[] solve(int[] packed,byte[] spirv){if(!loaded)throw new IllegalStateException("Native Vulkan unavailable");return solveNative(packed,spirv);}
+    private static native int[] solveNative(int[] packed,byte[] spirv);
 }

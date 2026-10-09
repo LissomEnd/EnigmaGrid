@@ -2,6 +2,7 @@
 import copy
 import json
 import threading
+from collections import deque
 from pathlib import Path
 
 MAX_RESULTS=8
@@ -17,6 +18,10 @@ class ReceiptOutbox:
         self.owner={k:state[k] for k in ('server','device_id')}
         self.load,self.save=load,save
         self.confirmed=set()
+        # A prefetched lease response can arrive after its receipt was accepted
+        # and removed from disk. Retain a bounded in-process tombstone so that
+        # the stale replay cannot be computed a second time.
+        self.recent_confirmed=deque(maxlen=128)
         with _LOCKS_GUARD:
             key=str(self.path.resolve())
             self.lock=_LOCKS.setdefault(key,threading.RLock())
@@ -47,7 +52,7 @@ class ReceiptOutbox:
 
     def computed_ids(self):
         """Snapshot before allocation; an upload may finish during that request."""
-        with self.lock:return {x['lease_id'] for x in self._entries()} | self.confirmed | self.reserved
+        with self.lock:return {x['lease_id'] for x in self._entries()} | self.confirmed | self.reserved | set(self.recent_confirmed)
 
     def has_capacity(self):
         with self.lock:
@@ -58,7 +63,7 @@ class ReceiptOutbox:
         """Reserve bounded output storage before starting a computation."""
         with self.lock:
             if not isinstance(lease_id,str) or not lease_id:raise RuntimeError('Invalid reservation')
-            if lease_id in self.reserved or any(x['lease_id']==lease_id for x in self._entries()):return False
+            if lease_id in self.reserved or lease_id in self.recent_confirmed or any(x['lease_id']==lease_id for x in self._entries()):return False
             if not self.has_capacity():return False
             self.reserved.add(lease_id)
             return True
@@ -97,13 +102,19 @@ class ReceiptOutbox:
         with self.lock:
             entries=self._entries()
             remaining=[x for x in entries if x['lease_id']!=lease_id]
-            if len(entries)==len(remaining):return
+            if len(entries)==len(remaining):return False
+            self.recent_confirmed.append(lease_id)
             if remaining:self._persist(remaining)
             else:self.path.unlink()
+            return True
 
     def confirm(self,lease_id):
         with self.lock:
-            if any(x['lease_id']==lease_id for x in self._entries()):self.confirmed.add(lease_id)
+            if lease_id not in self.confirmed and any(x['lease_id']==lease_id for x in self._entries()):
+                self.confirmed.add(lease_id)
+                self.recent_confirmed.append(lease_id)
+                return True
+            return False
 
     def flush_confirmed(self):
         with self.lock:
@@ -117,9 +128,10 @@ class ReceiptOutbox:
 
 class OutboxUploader:
     """One independent sender; shutdown leaves every unacknowledged item on disk."""
-    def __init__(self,queue,send,send_batch=None):
+    def __init__(self,queue,send,send_batch=None,on_ack=None):
         self.queue,self.send=queue,send
         self.send_batch=send_batch
+        self.on_ack=on_ack
         self.stop=threading.Event();self.wake=threading.Event()
         self.last_error=None;self.terminal=False
         self.thread=threading.Thread(target=self._run,name='enigmagrid-uploader',daemon=True)
@@ -136,13 +148,19 @@ class OutboxUploader:
                     self.wake.wait(1);self.wake.clear();continue
                 if self.send_batch is not None:
                     acknowledgements=self.send_batch(items)
-                    failed=False
+                    failed=False;confirmed=[]
                     for lease_id,ack in acknowledgements:
                         if isinstance(ack,dict) and ack.get('ok') is True:
-                            self.queue.confirm(lease_id)
+                            if self.queue.confirm(lease_id):confirmed.append((lease_id,ack))
                         else:
                             failed=True
                             if isinstance(ack,dict) and ack.get('status') in (401,403,422):self.terminal=True
+                    if confirmed:
+                        self.queue.flush_confirmed()
+                        if self.on_ack is not None:
+                            for lease_id,ack in confirmed:
+                                try:self.on_ack(lease_id,ack)
+                                except Exception:pass  # Monitoring cannot block receipts.
                     if self.terminal:return
                     if failed:raise RuntimeError('Some results not acknowledged; retained locally')
                     self.last_error=None
@@ -151,7 +169,10 @@ class OutboxUploader:
                     if self.stop.is_set():return
                     ack=self.send(payload)
                     if not isinstance(ack,dict) or ack.get('ok') is not True:raise RuntimeError('Result not acknowledged')
-                    self.queue.confirm(payload['lease_id'])
+                    confirmed=self.queue.acknowledge(payload['lease_id'])
+                    if confirmed and self.on_ack is not None:
+                        try:self.on_ack(payload['lease_id'],ack)
+                        except Exception:pass
                     self.last_error=None
             except Exception as error:
                 self.last_error=type(error).__name__

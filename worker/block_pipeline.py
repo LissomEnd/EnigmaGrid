@@ -9,11 +9,16 @@ from block_transport import ReceiptRejected
 from block_queue import QueueCapacityError
 
 class BlockPipeline:
-    def __init__(self,queue,transport,execute,*,lanes=1):
-        if type(lanes) is not int or lanes not in (1,2,4):raise ValueError('Compute lanes must be 1, 2 or 4')
+    def __init__(self,queue,transport,execute,*,lanes=1,gpu_execute=None):
+        if type(lanes) is not int or lanes not in (1,2,3,4):raise ValueError('Compute lanes must be 1..4')
+        if gpu_execute is not None and (not callable(gpu_execute) or lanes<2):
+            raise ValueError('GPU lane requires at least one CPU lane')
         self.queue=queue;self.transport=transport;self.execute=execute
         self.lanes=lanes;self.stop_event=threading.Event();self.running={}
-        self.solvers=ThreadPoolExecutor(max_workers=lanes,thread_name_prefix='block-compute')
+        self.gpu_execute=gpu_execute;self.gpu_running=set()
+        self.solvers=ThreadPoolExecutor(max_workers=lanes-(gpu_execute is not None),thread_name_prefix='block-compute')
+        self.gpu_solvers=(ThreadPoolExecutor(max_workers=1,thread_name_prefix='block-gpu-job')
+                          if gpu_execute is not None else None)
         self.writer=ThreadPoolExecutor(max_workers=1,thread_name_prefix='block-persist')
         self.waiting_writes=Queue(maxsize=2*lanes)
         self.writes=[];self.writes_lock=threading.Lock();self.allow_next=True
@@ -24,13 +29,29 @@ class BlockPipeline:
         self.status=None;self.next_status=0
         self.sender=ThreadPoolExecutor(max_workers=1,thread_name_prefix='block-upload')
         self.fetch=None;self.upload=None;self.next_fetch=0;self.next_upload=0
+        # Fill the first available two-block window toward 30 minutes before
+        # switching to the ordinary ten-minute successor threshold.
+        self.initial_fill=True
+        self.initial_fill_samples=[]
+        self.initial_fill_latch_rate=0
+        self.empty_fetches=0
         self.upload_latency=.25;self.upload_started=0
-        self.rate=0;self.closed=False;self.last_error=None;self.wait_reason=None;self.terminal_error=None
+        self.upload_seconds=0.0;self.lease_seconds=0.0
+        self.rate=0;self.closed=False;self.shutdown_complete=False;self.shutdown_error=None
+        self.last_error=None;self.wait_reason=None;self.terminal_error=None
+        self.fill_rate_hint=0
 
     def _timed_upload(self):
         began=time.monotonic()
         result=self.transport.upload()
-        return result,max(.001,time.monotonic()-began)
+        elapsed=max(.001,time.monotonic()-began)
+        self.upload_seconds+=elapsed
+        return result,elapsed
+
+    def _timed_allocate(self):
+        began=time.monotonic()
+        try:return self.transport.allocate()
+        finally:self.lease_seconds+=max(0,time.monotonic()-began)
 
     @property
     def computing(self):return any(not task.done() for task in self.running)
@@ -57,13 +78,14 @@ class BlockPipeline:
         else:
             for _,durable in batch:durable.set_result(None)
 
-    def _compute(self,batch):
+    def _compute(self,batch,execute=None):
+        execute=execute or self.execute
         persisted=[];seconds=0;count=0
         for identity,envelope in batch:
             if self.stop_event.is_set() or not self.allow_next:break
             for durable in persisted:
                 if durable.done():durable.result()
-            began=time.monotonic();result=self.execute(envelope)
+            began=time.monotonic();result=execute(envelope)
             elapsed=max(.000001,time.monotonic()-began)
             # Stop racing with a completed calculation must still save its receipt.
             persisted.append(self._persist((identity,envelope['start_unit'],result,elapsed)))
@@ -114,7 +136,27 @@ class BlockPipeline:
                         self.upload_latency=max(elapsed,.8*self.upload_latency+.2*elapsed)
                     if attr=='fetch':
                         self.wait_reason=response.get('wait_reason')
-                        if not response.get('block'):self.next_fetch=now+5
+                        if not response.get('block'):
+                            # Respect the server's retry floor and back off
+                            # when there is no eligible successor.
+                            self.empty_fetches=min(8,self.empty_fetches+1)
+                            try:delay=float(response.get('retry_after_seconds',0))
+                            except (TypeError,ValueError):delay=1
+                            if not math.isfinite(delay):delay=0
+                            # Empty responses must not become a 1 Hz poll while
+                            # the first block is short and no successor exists.
+                            self.next_fetch=now+min(300,max(delay,min(30,2**(self.empty_fetches-1))))
+                        else:
+                            self.empty_fetches=0
+                            block=response['block'];estimate=response.get('estimated_seconds')
+                            if (isinstance(block,dict) and type(estimate) in (int,float)
+                                    and math.isfinite(estimate) and estimate>0):
+                                start,end=block.get('start_unit'),block.get('end_unit')
+                                if type(start) is int and type(end) is int and end>start:
+                                    # A server-observed estimate lets the first
+                                    # successor arrive before the first job ends.
+                                    hint=(end-start)/estimate
+                                    if math.isfinite(hint) and hint>0:self.fill_rate_hint=hint
                 except ReceiptRejected as error:
                     self.terminal_error=str(error)
                 except QueueCapacityError:
@@ -127,9 +169,17 @@ class BlockPipeline:
                 finally:setattr(self,attr,None)
         if self.terminal_error:return False
         remaining,blocks=self.queue.remaining()
-        if allow_compute and self.fetch is None and blocks<2 and now>=self.next_fetch and prefetch_due(remaining,self.rate):
-            self.fetch=self.fetcher.submit(self.transport.allocate)
         pending=self.queue.pending()
+        reserve_rate=self.rate if self.rate>0 else self.fill_rate_hint
+        # A server estimate may be a default for an uncalibrated validator;
+        # only several stable, distinct durable completions can close fill.
+        initial_due=(remaining==0 or (reserve_rate>0 and remaining/reserve_rate<1800))
+        refill_due=initial_due if self.initial_fill else prefetch_due(remaining,self.rate)
+        # A full durable outbox cannot consume another reservation. Upload is
+        # independent and will reopen this path after an acknowledgement.
+        if (allow_compute and self.fetch is None and blocks<2 and now>=self.next_fetch
+                and len(pending)<getattr(self.queue,'max_pending',8) and refill_due):
+            self.fetch=self.fetcher.submit(self._timed_allocate)
         if pending and self.upload is None and now>=self.next_upload:
             # Aggregate tiny units for up to a second; a full outbox is sent now.
             capacity=getattr(self.queue,'max_pending',8)
@@ -142,33 +192,69 @@ class BlockPipeline:
         for task in list(self.running):
             if not task.done():continue
             seconds=task.result();self._release(self.running.pop(task))
+            self.gpu_running.discard(task)
             if seconds is not None:
                 measured=self.lanes/seconds
                 self.rate=measured if self.rate==0 else .8*self.rate+.2*measured
+                self._observe_initial_fill()
             worked=True
         with self.writes_lock:
             for durable in list(self.writes):
                 if durable.done():durable.result();self.writes.remove(durable)
-        free=self.lanes-len(self.running)
-        if free:
-            batches=[[] for _ in range(free)]
+        free_cpu=self.lanes-(self.gpu_solvers is not None)-(len(self.running)-len(self.gpu_running))
+        free_gpu=(1-len(self.gpu_running)) if self.gpu_solvers is not None else 0
+        if free_cpu or free_gpu:
+            routes=[]
+            if free_cpu:routes.append(('cpu',[]));free_cpu-=1
+            if free_gpu:routes.append(('gpu',[]))
+            routes.extend(('cpu',[]) for _ in range(free_cpu))
             # Reserve the complete window before launching any persistence writer.
             for _ in range(2):
-                for batch in batches:
+                for _,batch in routes:
                     current=self.queue.claim_prefetched(self.lanes)
                     if current is not None:batch.append(current)
-            for batch in batches:
+            for route,batch in routes:
                 if not batch:continue
-                try:self.running[self.solvers.submit(self._compute,batch)]=batch
+                executor=self.gpu_solvers if route=='gpu' else self.solvers
+                execute=self.gpu_execute if route=='gpu' else self.execute
+                try:
+                    task=executor.submit(self._compute,batch,execute)
+                    self.running[task]=batch
+                    if route=='gpu':self.gpu_running.add(task)
                 except BaseException:
                     self._release(batch);raise
         return worked
 
+    def _observe_initial_fill(self):
+        if self.rate<=0:return
+        remaining,_=self.queue.remaining()
+        # The first stable, slow jobs can overstate how long a block will last.
+        # Reopen the initial target only after a material measured rate increase;
+        # ordinary, comparable rates retain the ten-minute refill threshold.
+        if not self.initial_fill:
+            if (self.initial_fill_latch_rate>0
+                    and self.rate>self.initial_fill_latch_rate*1.15
+                    and remaining/self.rate<1800):
+                self.initial_fill=True
+                self.initial_fill_samples.clear()
+            return
+        if remaining/self.rate<1800:
+            self.initial_fill_samples.clear();return
+        self.initial_fill_samples.append(self.rate)
+        self.initial_fill_samples=self.initial_fill_samples[-3:]
+        if len(self.initial_fill_samples)==3 and max(self.initial_fill_samples)/min(self.initial_fill_samples)<=1.15:
+            self.initial_fill=False
+            self.initial_fill_latch_rate=self.rate
+
     def close(self):
+        if self.shutdown_complete:
+            if self.shutdown_error is not None:raise self.shutdown_error
+            return
         self.closed=True;self.allow_next=False;self.stop_event.set()
         # The engine's cooperative checkpoint observes stop_event. A completed
         # result remains owned by the writer even when the next job is cancelled.
         self.solvers.shutdown(wait=True,cancel_futures=True)
+        if self.gpu_solvers is not None:self.gpu_solvers.shutdown(wait=True,cancel_futures=True)
         self.writer.shutdown(wait=True,cancel_futures=False)
         failure=None
         with self.writes_lock:
@@ -179,8 +265,10 @@ class BlockPipeline:
             self.writes.clear()
         for batch in self.running.values():self._release(batch)
         self.running.clear()
+        self.gpu_running.clear()
         self.controller.shutdown(wait=True,cancel_futures=True)
         self.status_reader.shutdown(wait=True,cancel_futures=True)
         self.fetcher.shutdown(wait=True,cancel_futures=True)
         self.sender.shutdown(wait=True,cancel_futures=True)
+        self.shutdown_error=failure;self.shutdown_complete=True
         if failure is not None:raise failure

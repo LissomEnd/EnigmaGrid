@@ -10,7 +10,7 @@ with tempfile.TemporaryDirectory() as folder:
     path=Path(folder)/'blocks';owner=dict(server='test',device_id='device')
     block=dict(format=FORMAT,block_id='test',engine='bounded_crib_v1',start_unit=0,end_unit=12,
       config=dict(requires=['cpu','bounded_crib_v1'],program=dict(ciphertext='BDZGO',hypotheses=[dict(text='BD',legal_clean_offsets=[0])],chunk=3,ordinal_base=0,candidate_limit=3)))
-    q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block);q.add(block)
+    q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block,valid_for_seconds=7200);q.add(block,valid_for_seconds=7200)
     before=path.read_bytes();sample=q.qualification_sample()
     assert [x['start_unit'] for x in sample]==list(range(12))
     assert path.read_bytes()==before and not q.claims and q.computing_block is None
@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory() as folder:
         key,unit=q.next_unit();assert unit['start_unit']==n
         q.complete(key,n,run(unit),.1)
         q=BlockQueue(path,owner,worker.load_state,worker.save_state)
+        q.update_status({'test':dict(status='reserved',valid_for_seconds=7200)})
     assert q.next_unit() is None and len(q.pending())==8
     q.acknowledge(key,[0,2]);assert len(q.pending())==6
     assert q.next_unit()[1]['start_unit']==8
@@ -41,7 +42,7 @@ with tempfile.TemporaryDirectory() as folder:
     path=Path(folder)/'folded';writes=[]
     def counted_save(destination,value):
         worker.save_state(destination,value);writes.append(1)
-    q=BlockQueue(path,owner,worker.load_state,counted_save);q.add(block)
+    q=BlockQueue(path,owner,worker.load_state,counted_save);q.add(block,valid_for_seconds=7200)
     key,unit=q.next_unit();q.complete(key,0,run(unit),.1)
     key,unit=q.next_unit();before=len(writes)
     q.acknowledge(key,[0]);assert q.pending()==[] and len(writes)==before
@@ -60,9 +61,10 @@ print('PASS folded acknowledgement saves once and safely replays after crash or 
 # The performance cache must not hide a recovery write or expose mutable state.
 with tempfile.TemporaryDirectory() as folder:
     path=Path(folder)/'cached'
-    cached=BlockQueue(path,owner,worker.load_state,worker.save_state);cached.add(block)
+    cached=BlockQueue(path,owner,worker.load_state,worker.save_state);cached.add(block,valid_for_seconds=7200)
     assert cached.pending()==[]
     recovery=BlockQueue(path,owner,worker.load_state,worker.save_state)
+    recovery.update_status({'test':dict(status='reserved',valid_for_seconds=7200)})
     key,unit=recovery.next_unit();recovery.complete(key,0,run(unit),.1)
     exposed=cached.pending();assert len(exposed)==1
     exposed[0]['result']['mutated_by_reader']=True;exposed.clear()
@@ -88,11 +90,11 @@ print('PASS cache invalidation after recovery, post-commit failure, mutable resu
 from block_transport import BlockTransport
 with tempfile.TemporaryDirectory() as folder:
     q=BlockQueue(Path(folder)/'race',owner,worker.load_state,worker.save_state)
-    q.add(block)
+    q.add(block,valid_for_seconds=7200)
     second=copy.deepcopy(block);second['block_id']='next'
     def request(endpoint,payload):
         assert payload['blocks']==['test']
-        q.add(second)
+        q.add(second,valid_for_seconds=7200)
         return {'blocks':[{'block_id':'test','status':'expired','valid_for_seconds':0}]}
     BlockTransport(q,request).refresh_status()
     assert q.next_unit()[0]=='next'
@@ -103,7 +105,7 @@ print('PASS status response racing with next-block prefetch')
 with tempfile.TemporaryDirectory() as folder:
     q=BlockQueue(Path(folder)/'terminal-replay',owner,worker.load_state,worker.save_state)
     identity=q.allocation_request()
-    q.add(block)  # Crash after descriptor write, before request ID was cleared.
+    q.add(block,valid_for_seconds=7200)  # Crash after descriptor write, before request ID was cleared.
     key,unit=q.next_unit();q.complete(key,unit['start_unit'],run(unit),.1)
     before=q.pending()
     q.allocation_retired(identity,block)
@@ -114,7 +116,7 @@ print('PASS terminal allocation replay preserves pending results atomically')
 
 with tempfile.TemporaryDirectory() as folder:
     q=BlockQueue(Path(folder)/'groups',owner,worker.load_state,worker.save_state,grouped=True)
-    large=copy.deepcopy(block);large['end_unit']=100;q.add(large)
+    large=copy.deepcopy(block);large['end_unit']=100;q.add(large,valid_for_seconds=7200)
     for ordinal in range(64):
         key,unit=q.next_unit();q.complete(key,ordinal,run(unit),.05)
     assert q.next_unit() is None and len(q.pending())==64
@@ -139,7 +141,7 @@ print('PASS negotiated grouped outbox bound, partial acknowledgements and downgr
 import block_queue as queue_module
 with tempfile.TemporaryDirectory() as folder:
     q=BlockQueue(Path(folder)/'byte-bound',owner,worker.load_state,worker.save_state,grouped=True)
-    q.add(block)
+    q.add(block,valid_for_seconds=7200)
     original_limit=queue_module.MAX_BYTES
     used=len(json.dumps(q._read(),allow_nan=False).encode())
     try:
@@ -147,7 +149,7 @@ with tempfile.TemporaryDirectory() as folder:
         assert q.next_unit() is None and not q.pending()
         queue_module.MAX_BYTES+=1
         key,unit=q.next_unit()
-        try:q.add(second)
+        try:q.add(second,valid_for_seconds=7200)
         except ValueError:pass
         else:raise AssertionError('Prefetch consumed reserved result space')
         assert q.identities()==['test']
@@ -163,7 +165,7 @@ print('PASS result byte reservation, concurrent prefetch exclusion and failed-wr
 
 with tempfile.TemporaryDirectory() as folder:
     q=BlockQueue(Path(folder)/'active-release',owner,worker.load_state,worker.save_state)
-    q.add(block);key,unit=q.next_unit()
+    q.add(block,valid_for_seconds=7200);key,unit=q.next_unit()
     q.update_status({key:dict(status='expired',valid_for_seconds=0)})
     assert not q.releasable()
     try:q.released(key)
@@ -177,7 +179,7 @@ print('PASS expiry during computation retains descriptor and unacknowledged rece
 for lanes in (2,4):
     with tempfile.TemporaryDirectory() as folder:
         path=Path(folder)/'concurrent'
-        q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block)
+        q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block,valid_for_seconds=7200)
         claims=[q.claim_next(lanes) for _ in range(lanes)]
         assert [entry[1]['start_unit'] for entry in claims]==list(range(lanes))
         assert q.claim_next(lanes) is None
@@ -194,6 +196,8 @@ for lanes in (2,4):
         q.release_claim('test',0);q.acknowledge('test',list(range(1,lanes)))
         recovered=BlockQueue(path,owner,worker.load_state,worker.save_state)
         assert not recovered.pending()
+        assert recovered.claim_next(lanes) is None  # Recovery needs fresh server status.
+        recovered.update_status({'test':dict(status='reserved',valid_for_seconds=7200)})
         first=recovered.claim_next(lanes);second=recovered.claim_next(lanes)
         assert first[1]['start_unit']==0 and second[1]['start_unit']==lanes
         recovered.complete(first[0],0,run(first[1]),.1)
@@ -204,7 +208,7 @@ for lanes in (2,4):
 print('PASS 2/4-lane out-of-order durable completion, failed save, acknowledged gap recovery and safe release')
 
 with tempfile.TemporaryDirectory() as folder:
-    q=BlockQueue(Path(folder)/'gap-bound',owner,worker.load_state,worker.save_state);q.add(block)
+    q=BlockQueue(Path(folder)/'gap-bound',owner,worker.load_state,worker.save_state);q.add(block,valid_for_seconds=7200)
     first=q.claim_next(2);assert first[1]['start_unit']==0
     for unit in range(1,8):
         key,envelope=q.claim_next(2);assert envelope['start_unit']==unit
@@ -215,7 +219,7 @@ with tempfile.TemporaryDirectory() as folder:
 print('PASS acknowledged completions cannot grow an unfinished gap without bound')
 
 with tempfile.TemporaryDirectory() as folder:
-    path=Path(folder)/'expired';q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block)
+    path=Path(folder)/'expired';q=BlockQueue(path,owner,worker.load_state,worker.save_state);q.add(block,valid_for_seconds=7200)
     key,envelope=q.next_unit();receipt=run(envelope);q.complete(key,0,receipt,.1)
     original=q.save;q.save=full_disk
     try:q.archive_expired(key,[0])
@@ -229,12 +233,12 @@ with tempfile.TemporaryDirectory() as folder:
     snapshot=recovered.monitor_snapshot()
     assert snapshot['expired_results']==1 and snapshot['outbox_count']==0 and snapshot['ready_units']==0
     recovered.released(key);assert not recovered.identities()
-    recovered.add(block);assert recovered.next_unit() is not None
+    recovered.add(block,valid_for_seconds=7200);assert recovered.next_unit() is not None
 print('PASS encrypted expired receipt archive, failed write retention and resumed allocation')
 
 with tempfile.TemporaryDirectory() as folder:
     from block_transport import BlockTransport,ReceiptRejected
-    q=BlockQueue(Path(folder)/'transport-expiry',owner,worker.load_state,worker.save_state);q.add(block)
+    q=BlockQueue(Path(folder)/'transport-expiry',owner,worker.load_state,worker.save_state);q.add(block,valid_for_seconds=7200)
     key,envelope=q.next_unit();q.complete(key,0,run(envelope),.1)
     mode=['invalid']
     def reply(route,payload):

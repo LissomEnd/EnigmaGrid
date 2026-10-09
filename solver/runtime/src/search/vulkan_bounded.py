@@ -1,8 +1,44 @@
 """Bounded Vulkan ABI adapter. Activation requires device-local qualification."""
+import atexit
 import ctypes
 import struct
+import threading
 from pathlib import Path
 from search.bounded_crib import crib_rows
+
+
+# Keep at least one CDLL reference alive until explicit shutdown/atexit.
+# Otherwise a short-lived NativeSolver can unload the DLL first, running its
+# C++ static destructor after the Vulkan loader has begun to tear down.
+_NATIVE_LIBRARIES = {}
+_NATIVE_LOCK = threading.Lock()
+_AUTOMATIC_NATIVE_CLOSE = True
+
+
+def close_loaded_native_solvers():
+    """Release process-global Vulkan state after all native callers have joined."""
+    with _NATIVE_LOCK:
+        libraries = tuple(_NATIVE_LIBRARIES.values())
+    for library in libraries:
+        close = library.enigmagrid_close
+        close.argtypes = []
+        close.restype = ctypes.c_int
+        if close() != 0:
+            raise RuntimeError('Vulkan solver shutdown failed')
+
+
+def disable_automatic_native_close():
+    """Do not tear down a native context if process owners failed to stop."""
+    global _AUTOMATIC_NATIVE_CLOSE
+    _AUTOMATIC_NATIVE_CLOSE = False
+
+
+def _close_native_at_exit():
+    if _AUTOMATIC_NATIVE_CLOSE:
+        close_loaded_native_solvers()
+
+
+atexit.register(_close_native_at_exit)
 
 
 def pack(rows, edges, pairs, nodes, boards):
@@ -54,11 +90,21 @@ class NativeSolver:
         words=struct.unpack('<'+'I'*(len(shader)//4),shader)
         if words[0]!=0x07230203:raise ValueError('Invalid shader magic')
         self.code=(ctypes.c_uint32*len(words))(*words)
-        self.library=ctypes.CDLL(str(Path(library).resolve(strict=True)))
+        library_path=str(Path(library).resolve(strict=True))
+        self.library=ctypes.CDLL(library_path)
+        # A solver without the explicit teardown ABI may pass parity, then
+        # crash the process when the driver's C++ static context is destroyed.
+        try:self.close_native=self.library.enigmagrid_close
+        except AttributeError as error:
+            raise RuntimeError('Vulkan solver lacks explicit close ABI') from error
+        self.close_native.argtypes=[]
+        self.close_native.restype=ctypes.c_int
         self.solve=self.library.enigmagrid_solve
         u32=ctypes.POINTER(ctypes.c_uint32)
         self.solve.argtypes=[u32,ctypes.c_size_t,u32,ctypes.c_size_t,u32,ctypes.c_size_t,ctypes.POINTER(ctypes.c_size_t),ctypes.POINTER(ctypes.c_char),ctypes.c_size_t]
         self.solve.restype=ctypes.c_int
+        with _NATIVE_LOCK:
+            _NATIVE_LIBRARIES.setdefault(library_path,self.library)
     def __call__(self,data):
         source=(ctypes.c_uint32*len(data))(*data)
         capacity=2+data[0]*(3+data[4]*26)
@@ -100,7 +146,7 @@ class BudgetedDispatch:
         import time,threading
         self.dispatch=dispatch;self.percent=percent;self.cancelled=cancelled
         self.clock=clock or time.monotonic;self.sleep=sleep or time.sleep
-        self.lock=threading.Lock();self.finished=None;self.duration=0
+        self.lock=threading.Lock();self.finished=None;self.duration=0;self.calls=0
     def __call__(self,data):
         return self.call(data)
 
@@ -119,7 +165,10 @@ class BudgetedDispatch:
                 if delay<=0:break
                 self.sleep(min(.02,delay))
             began=self.clock()
-            try:return self.dispatch(data)
+            try:
+                result=self.dispatch(data)
+                self.calls+=1
+                return result
             finally:self.finished=self.clock();self.duration=max(0,self.finished-began)
         finally:self.lock.release()
 
@@ -134,16 +183,23 @@ class SharedGpuSolver:
         self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='bounded-gpu')
 
     def submit(self,reference,items,cancelled):
+        dispatches=[0]
         def solve():
             if self.failed:raise RuntimeError('Shared GPU backend failed')
             def check():
                 if self.closed.is_set() or cancelled():raise InterruptedError('GPU search cancelled')
-            solver=SolverMap(lambda data:self.budget.call(data,cancelled),check)
+            def dispatch(data):
+                result=self.budget.call(data,cancelled)
+                dispatches[0]+=1
+                return result
+            solver=SolverMap(dispatch,check)
             try:return list(solver(reference,items))
             except (RuntimeError,ValueError):
                 self.failed=True
                 raise
-        return self.pool.submit(solve)
+        future=self.pool.submit(solve)
+        future.gpu_dispatches=dispatches
+        return future
 
     def close(self):
         self.closed.set()
@@ -162,6 +218,7 @@ class HybridSolverMap:
         self.owns_service=gpu_service is None
         self.cpu=cpu_map;self.gpu_cores=gpu_cores
         self.checkpoint=checkpoint;self.gpu_enabled=gpu_enabled;self.on_failure=on_failure
+        self.gpu_dispatches=0
     @property
     def failed(self):return self.service.failed
     def __call__(self,reference,tasks):
@@ -190,7 +247,9 @@ class HybridSolverMap:
                     except TimeoutError:
                         if not future.done():continue
                     except (RuntimeError,ValueError):break
-                try:gpu_results=future.result()
+                try:
+                    gpu_results=future.result()
+                    self.gpu_dispatches+=future.gpu_dispatches[0]
                 except (RuntimeError,ValueError) as error:
                     self.on_failure(error)
                     # CPU map is now idle; replay only the failed GPU partition.

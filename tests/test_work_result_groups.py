@@ -21,5 +21,5 @@ for mutate in [lambda p:p['groups'][1].__setitem__(0,p['groups'][0][0]),
  try:groups.validate_groups(block,bad)
  except ValueError:pass
  else:raise AssertionError('Malformed groups accepted')
-assert groups.MAX_BODY_BYTES==256*1024
+assert groups.MAX_BODY_BYTES==768*1024
 print('PASS grouped receipts preserve unit results; duplicate, scope and count bounds enforced')

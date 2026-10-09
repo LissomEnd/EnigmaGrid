@@ -6,6 +6,10 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'worker'))
 import worker
 
 def main():
+ assert worker.lease_retry_seconds(1,5)==1
+ assert worker.lease_retry_seconds(5,1)==5
+ assert worker.lease_retry_seconds(None,5)==5
+ assert worker.lease_retry_seconds(120,5)==60
  state={'server':'https://example.invalid','device_token':'test'}
  settings={'cpu_percent':50,'gpu_percent':0,'allow_cpu':True,'allow_gpu':False}
  controls={'settings':settings,'enabled':True,'quarantined':False}

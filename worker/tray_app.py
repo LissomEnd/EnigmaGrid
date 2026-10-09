@@ -1,5 +1,7 @@
 import json
 
+import math
+
 import os
 
 import subprocess
@@ -37,7 +39,7 @@ from PIL import Image, ImageDraw
 
 APP_NAME="Enigma Volunteer Grid"
 
-APP_VERSION="0.4.14"
+APP_VERSION="0.5.0"
 
 BG="#0b1020";CARD="#131c31";CARD2="#18233c";TEXT="#f4f7fb";MUTED="#98a6c2"
 
@@ -271,7 +273,7 @@ class HistoryChart(tk.Canvas):
 
         values=[float(row[key]) for row in self.rows for _label,key,_color in self.series
 
-                if isinstance(row.get(key),(int,float))]
+                if isinstance(row.get(key),(int,float)) and math.isfinite(row[key])]
 
         peak=max(values,default=0.0)
 
@@ -292,6 +294,34 @@ class HistoryChart(tk.Canvas):
         shown=f"{v:.0f}" if abs(v)>=100 else f"{v:.1f}" if abs(v)>=10 else f"{v:.3f}"
 
         return shown+self.suffix
+
+    def _segments(self,key,left,right,top,bottom,minimum,maximum):
+
+        """Keep unavailable samples as gaps rather than drawing invented readings."""
+
+        segments=[];points=[];span=max(.000001,maximum-minimum)
+
+        for i,row in enumerate(self.rows):
+
+            value=row.get(key)
+
+            if not isinstance(value,(int,float)) or not math.isfinite(value):
+
+                if points:segments.append(points);points=[]
+
+                continue
+
+            x=left+(right-left)*(i/max(1,len(self.rows)-1))
+
+            clipped=max(minimum,min(maximum,float(value)))
+
+            y=bottom-(bottom-top)*(clipped-minimum)/span
+
+            points.extend((x,y))
+
+        if points:segments.append(points)
+
+        return segments
 
     def redraw(self):
 
@@ -315,25 +345,9 @@ class HistoryChart(tk.Canvas):
 
         for label,key,color in self.series:
 
-            points=[]
+            for points in self._segments(key,left,w-right,top,h-bottom,minimum,maximum):
 
-            for i,row in enumerate(self.rows):
-
-                value=row.get(key)
-
-                if not isinstance(value,(int,float)):continue
-
-                x=left+(w-left-right)*(i/max(1,len(self.rows)-1))
-
-                clipped=max(minimum,min(maximum,float(value)))
-
-                y=h-bottom-(h-top-bottom)*(clipped-minimum)/span
-
-                points.extend((x,y))
-
-            if len(points)>=4:
-
-                self.create_line(*points,fill=color,width=2,smooth=False)
+                if len(points)>=4:self.create_line(*points,fill=color,width=2,smooth=False)
 
                 self.create_oval(points[-2]-2,points[-1]-2,points[-2]+2,points[-1]+2,fill=color,outline=color)
 
@@ -623,7 +637,7 @@ class App:
 
         navigation=tk.Frame(self.body,bg=BG);navigation.pack(fill="x",pady=(0,12))
 
-        pages={name:tk.Frame(self.body,bg=BG) for name in ('Compute','Monitor','Results','Scoreboard','Settings')}
+        pages={name:tk.Frame(self.body,bg=BG) for name in ('Compute','Monitor','Results','Settings')}
 
         buttons={}
 
@@ -665,7 +679,7 @@ class App:
 
             self.stat_labels[key]=v
 
-        board=self.card(pages["Scoreboard"]);board_inner=tk.Frame(board,bg=CARD);board_inner.pack(fill="both",expand=True,padx=18,pady=14)
+        board=self.card(pages["Results"]);board_inner=tk.Frame(board,bg=CARD);board_inner.pack(fill="both",expand=True,padx=18,pady=14)
 
         self.label(board_inner,"Global scoreboard",14,TEXT,True).pack(anchor="w")
 
@@ -675,7 +689,7 @@ class App:
 
         self.scoreboard_status.pack(anchor="w",pady=(0,10))
 
-        self.scoreboard=ttk.Treeview(board_inner,columns=("rank","name","units","jobs"),show="headings",height=12)
+        self.scoreboard=ttk.Treeview(board_inner,columns=("rank","name","units","jobs"),show="headings",height=7)
 
         for key,title,width in (("rank","#",40),("name","Contributor",230),("units","Credited units",130),("jobs","Credited jobs",130)):
 
@@ -694,6 +708,13 @@ class App:
         self.update_btn=self.button(u,"Check for updates",self.check_update)
 
         self.update_btn.pack(anchor="w")
+
+        diagnostics=self.card(pages["Settings"]);d=tk.Frame(diagnostics,bg=CARD);d.pack(fill="x",padx=18,pady=14)
+        self.label(d,"Device check",14,TEXT,True).pack(anchor="w")
+        self.device_check_status=self.label(d,"Check CPU and qualified GPU availability without changing your settings.",9,MUTED,wraplength=560,justify="left")
+        self.device_check_status.pack(anchor="w",pady=(5,8))
+        self.device_check_btn=self.button(d,"Run device check",self.run_device_check)
+        self.device_check_btn.pack(anchor="w")
 
 
 
@@ -739,15 +760,23 @@ class App:
 
         self.label(m,"CPU / GPU temperature · rolling 2 minutes",9,MUTED,True).pack(anchor="w")
 
+        self.temperature_status=self.label(m,"Checking temperature sensors...",8,MUTED,wraplength=610,justify="left")
+
+        self.temperature_status.pack(anchor="w",pady=(3,0))
+
         self.temperature_chart=HistoryChart(m,[("CPU","cpu_temp_c",GREEN),("GPU","gpu_temp_c",AMBER)],20,100,suffix="°C")
 
         self.temperature_chart.pack(fill="x",pady=(4,10))
 
         self.label(m,"Processing throughput · rolling 2 minutes",9,MUTED,True).pack(anchor="w")
 
-        self.throughput_chart=HistoryChart(m,[("Units/s","units_per_second",ACCENT),("Jobs/s","jobs_per_second",GREEN)],dynamic=True)
+        self.units_chart=HistoryChart(m,[("Units/s","units_per_second",ACCENT)],height=130,dynamic=True)
 
-        self.throughput_chart.pack(fill="x",pady=(4,12))
+        self.units_chart.pack(fill="x",pady=(4,8))
+
+        self.jobs_chart=HistoryChart(m,[("Jobs/s","jobs_per_second",GREEN)],height=130,dynamic=True)
+
+        self.jobs_chart.pack(fill="x",pady=(4,12))
 
         thermal=tk.Frame(pages["Settings"],bg=CARD);thermal.pack(fill="x")
 
@@ -775,7 +804,7 @@ class App:
 
         self.thermal_save_btn=self.button(pages["Settings"],"Apply thermal limits",self.save_thermal_limits,True);self.thermal_save_btn.pack(anchor="w",pady=(10,0))
 
-        self.label(pages["Settings"],"These are application limits: EnigmaGrid pauses computation at the ceiling and resumes after about 5°C of cooling. Firmware/driver protections are never overridden. Missing sensors are shown as n/a.",
+        self.label(pages["Settings"],"When a temperature sensor is available, EnigmaGrid pauses at your ceiling and resumes after about 5°C of cooling. Firmware/driver protections remain active even if sensors are unavailable to the app.",
 
                    8,MUTED,wraplength=610,justify="left").pack(anchor="w",pady=(8,0))
 
@@ -832,6 +861,25 @@ class App:
         except Exception:self.hw={}
 
         self.root.after(0,self.apply_hardware)
+
+    def run_device_check(self):
+        self.device_check_btn.config(state='disabled')
+        self.device_check_status.config(text='Checking local CPU and GPU support...')
+        def check():
+            try:
+                result=run_worker(['--self-test'],capture=True,timeout=120)
+                report=json.loads((result.stdout or '').strip().splitlines()[-1]) if result.returncode==0 else {}
+                if report.get('ok') is not True:raise RuntimeError('Local check did not complete')
+                gpus=report.get('gpus') or []
+                detail=f"CPU: {report.get('cpu_count','n/a')} logical cores · Qualified OpenCL GPUs: {len(gpus)}"
+            except Exception as error:
+                detail=f'Device check unavailable: {type(error).__name__}'
+            def finish():
+                if not self.root.winfo_exists():return
+                self.device_check_status.config(text=detail)
+                self.device_check_btn.config(state='normal')
+            self.root.after(0,finish)
+        threading.Thread(target=check,name='device-check',daemon=True).start()
 
 
 
@@ -1156,11 +1204,11 @@ class App:
 
         if hasattr(self,"scoreboard"):
 
-            self.scoreboard.delete(*self.scoreboard.get_children())
-
             leaders=g.get("leaderboard")
 
             if isinstance(leaders,list):
+
+                self.scoreboard.delete(*self.scoreboard.get_children())
 
                 for rank,entry in enumerate(leaders[:20],1):
 
@@ -1170,7 +1218,7 @@ class App:
 
             else:
 
-                self.scoreboard_status.config(text="Global standings temporarily unavailable; retrying automatically.")
+                self.scoreboard_status.config(text="Latest available standings; refresh pending." if self.scoreboard.get_children() else "Global standings temporarily unavailable; retrying automatically.")
 
         if hasattr(self,"stat_labels"):
 
@@ -1206,13 +1254,34 @@ class App:
 
         if not alive:telemetry={}
 
+        if hasattr(self,"temperature_status"):
+
+            cpu_temp=telemetry.get("cpu_temp_c");gpu_temp=telemetry.get("gpu_temp_c")
+
+            if not alive:detail="Temperature readings unavailable while worker is stopped."
+
+            elif not isinstance(cpu_temp,(int,float)) and not isinstance(gpu_temp,(int,float)):
+
+                detail="Temperature sensors unavailable on this PC. App temperature ceilings need sensor readings; firmware/driver protection remains active."
+
+            else:
+
+                shown=lambda value:f"{float(value):.1f}°C" if isinstance(value,(int,float)) else "n/a"
+
+                detail=f"CPU {shown(cpu_temp)} · GPU {shown(gpu_temp)}"
+
+            self.temperature_status.config(text=detail)
+
         if hasattr(self,"monitor_line"):
 
             def show(value,suffix=""):
 
                 return f"{float(value):.1f}{suffix}" if isinstance(value,(int,float)) else "n/a"
 
-            self.monitor_line.config(text=f"CPU {show(telemetry.get('cpu_percent'),'%')} · GPU {show(telemetry.get('gpu_percent'),'%')} · RAM {show(telemetry.get('memory_percent'),'%')} · CPU {show(telemetry.get('cpu_temp_c'),'°C')} · GPU {show(telemetry.get('gpu_temp_c'),'°C')} · {telemetry.get('sensor_provider','sensor unavailable')}\nBackend: {h.get('bounded_backend','not reported') if alive else 'worker stopped'} · Ready units: {h.get('ready_units') if alive and h.get('ready_units') is not None else 'n/a'} · Pending uploads: {h.get('outbox_count','n/a') if alive else 'n/a'} | Running: {h.get('running_jobs','n/a') if alive else 'n/a'} | Expired, saved: {h.get('expired_results') if alive and h.get('expired_results') is not None else 'n/a'}")
+            gpu_scope=telemetry.get('gpu_metric_scope','unknown')
+            backend=(h.get('bounded_backend','not reported') if h.get('active_engine') in (None,'bounded_crib_v1')
+                     else h.get('resource','not reported')) if alive else 'worker stopped'
+            self.monitor_line.config(text=f"CPU {show(telemetry.get('cpu_percent'),'%')} (worker) · GPU {show(telemetry.get('gpu_percent'),'%')} ({gpu_scope}) · RAM {show(telemetry.get('memory_percent'),'%')} · CPU {show(telemetry.get('cpu_temp_c'),'°C')} · GPU {show(telemetry.get('gpu_temp_c'),'°C')} · {telemetry.get('sensor_provider','temperature sensor unavailable')}\nBackend: {backend} · Ready units: {h.get('ready_units') if alive and h.get('ready_units') is not None else 'n/a'} · Pending uploads: {h.get('outbox_count','n/a') if alive else 'n/a'} | Running: {h.get('running_jobs','n/a') if alive else 'n/a'} | Expired, saved: {h.get('expired_results') if alive and h.get('expired_results') is not None else 'n/a'}")
 
             throughput=h.get("throughput") if isinstance(h.get("throughput"),dict) else {}
 
@@ -1228,9 +1297,9 @@ class App:
 
                 self.resource_chart.add(telemetry);self.temperature_chart.add(telemetry)
 
-                self.throughput_chart.add({"units_per_second":throughput.get("units_per_second"),
+                self.units_chart.add({"units_per_second":throughput.get("units_per_second")})
 
-                                           "jobs_per_second":throughput.get("jobs_per_second")})
+                self.jobs_chart.add({"jobs_per_second":throughput.get("jobs_per_second")})
 
         if c.get("stop_requested"):
 
