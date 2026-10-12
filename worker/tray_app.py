@@ -39,7 +39,7 @@ from PIL import Image, ImageDraw
 
 APP_NAME="Enigma Volunteer Grid"
 
-APP_VERSION="0.5.3"
+APP_VERSION="0.5.4"
 
 BG="#0b1020";CARD="#131c31";CARD2="#18233c";TEXT="#f4f7fb";MUTED="#98a6c2"
 
@@ -774,9 +774,7 @@ class App:
 
         self.units_chart.pack(fill="x",pady=(4,8))
 
-        self.jobs_chart=HistoryChart(m,[("Jobs/s","jobs_per_second",GREEN)],height=130,dynamic=True)
 
-        self.jobs_chart.pack(fill="x",pady=(4,12))
 
         thermal=tk.Frame(pages["Settings"],bg=CARD);thermal.pack(fill="x")
 
@@ -1299,7 +1297,6 @@ class App:
 
                 self.units_chart.add({"units_per_second":throughput.get("units_per_second")})
 
-                self.jobs_chart.add({"jobs_per_second":throughput.get("jobs_per_second")})
 
         if c.get("stop_requested"):
 

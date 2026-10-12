@@ -32,7 +32,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.5.3"
+VERSION="0.5.4"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
@@ -587,8 +587,8 @@ def _thermal_probe(runtime,state_path):
     cpu_hot=(isinstance(cpu,(int,float)) and math.isfinite(cpu) and (cpu>cpu_limit-5 if cpu_hot else cpu>=cpu_limit))
     gpu_hot=(isinstance(gpu,(int,float)) and math.isfinite(gpu) and (gpu>gpu_limit-5 if gpu_hot else gpu>=gpu_limit))
     runtime["_cpu_hot"]=cpu_hot;runtime["_gpu_hot"]=gpu_hot
-    if cpu_hot:reason=f"CPU cooling · {cpu:.1f}°C / {cpu_limit}°C"
-    elif gpu_hot:reason=f"GPU cooling · {gpu:.1f}°C / {gpu_limit}°C"
+    if cpu_hot:reason=f"CPU cooling Â· {cpu:.1f}Â°C / {cpu_limit}Â°C"
+    elif gpu_hot:reason=f"GPU cooling Â· {gpu:.1f}Â°C / {gpu_limit}Â°C"
     else:reason=""
     runtime["thermal_reason"]=reason
     return reason,ctl
@@ -2199,6 +2199,9 @@ def main():
     if args.self_test_constrained:
         constrained_self_test();return
     if args.self_test:
+        # GPU absence can be legitimate, but a broken bundled dependency cannot.
+        # Import before hardware()'s optional-device fallback hides the cause.
+        import sqlite3, pyopencl
         h=hardware();assert "cpu_count" in h
         import numpy, numba
         portable_assets=False;portable_spawn=False;portable_stop=False
@@ -2214,7 +2217,7 @@ def main():
         ok=portable_assets and portable_spawn and portable_stop
         print(json.dumps({"ok":ok,"version":VERSION,"numpy":numpy.__version__,"numba":numba.__version__,
                           "cpu_count":h.get("cpu_count",1),"capabilities":h.get("capabilities",[]),
-                          "gpus":h.get("gpus",[]),"portable_batch_assets_ready":portable_assets,
+                          "gpus":h.get("gpus",[]),"opencl_import_ready":True,"sqlite_version":sqlite3.sqlite_version,"portable_batch_assets_ready":portable_assets,
                           "portable_batch_spawn_ready":portable_spawn,
                           "portable_batch_stop_ready":portable_stop}))
         if not ok:raise SystemExit(2)

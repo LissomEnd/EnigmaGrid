@@ -11,6 +11,11 @@ foreach ($nativeAsset in @($nativeLibrary,$nativeShader)) {
 }
 $py="$root\.venv-server\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $py)) { $py=(Get-Command python -ErrorAction Stop).Source }
+# Resolve the SQLite DLL actually loaded by this interpreter. A local runtime
+# override may place it below site-packages; _sqlite3.pyd still needs the DLL at
+# the frozen bundle root, rather than that build-machine-only subdirectory.
+$sqliteDll = (& $py -c "import sqlite3,ctypes; k=ctypes.WinDLL('kernel32',use_last_error=True); k.GetModuleHandleW.restype=ctypes.c_void_p; k.GetModuleFileNameW.argtypes=[ctypes.c_void_p,ctypes.c_wchar_p,ctypes.c_ulong]; h=k.GetModuleHandleW('sqlite3.dll'); assert h; b=ctypes.create_unicode_buffer(32768); assert k.GetModuleFileNameW(h,b,len(b)); print(b.value)").Trim()
+if($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sqliteDll -PathType Leaf)){throw 'Cannot resolve loaded SQLite dependency'}
 $out="$root\dist\windows-candidate"
 $work="$root\build\pyinstaller"
 $spec="$root\build\spec"
@@ -52,6 +57,7 @@ $worker=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--console",
   "--add-data","$root\worker\update_config.json;worker",
   "--add-data","$root\worker\update_public_key.json;worker",
   "--add-binary","$nativeLibrary;worker/native",
+  "--add-binary","$sqliteDll;.",
   "--add-data","$nativeShader;worker/native",
   "--hidden-import","bounded_gpu_qualification",
   "--hidden-import","gpu_lane_qualification",
@@ -79,7 +85,7 @@ $zip="$root\dist\enigma-volunteer-windows-candidate.zip"
 Remove-Item $zip -Force -ErrorAction SilentlyContinue
 Compress-Archive -Path "$out\*" -DestinationPath $zip -CompressionLevel Optimal
 
-& $py "$root\scripts\create_installer_payload.py" $out "0.5.3"
+& $py "$root\scripts\create_installer_payload.py" $out "0.5.4"
 if($LASTEXITCODE -ne 0){throw "Installer payload manifest failed"}
 $setup=@("-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
   "--name","EnigmaGridSetup","--distpath","$root\dist","--workpath","$work\setup","--specpath",$spec,
