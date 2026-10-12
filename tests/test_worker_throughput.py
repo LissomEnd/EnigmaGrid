@@ -7,11 +7,21 @@ runtime={}
 with patch.object(worker.time,'monotonic',return_value=100):
     worker.record_throughput(runtime,2,.05)
     worker.record_throughput(runtime,3,.1)
-    assert worker.throughput_snapshot(runtime)['units_per_second']==1
-    assert worker.throughput_snapshot(runtime)['jobs_per_second']==.4
+    assert worker.throughput_snapshot(runtime)['units_per_second']==5/30
+    assert worker.throughput_snapshot(runtime)['jobs_per_second']==2/30
 with patch.object(worker.time,'monotonic',return_value=106):
+    assert worker.throughput_snapshot(runtime)['jobs_per_second']==2/30
+with patch.object(worker.time,'monotonic',return_value=130):
     sample=worker.throughput_snapshot(runtime)
     assert sample['units_per_second']==sample['jobs_per_second']==0
     assert sample['completed_units']==5 and sample['completed_jobs']==2
     assert abs(sample['compute_seconds']-.15)<1e-9
-print('PASS wall-time throughput includes idle and preserves session totals')
+runtime={'status':'computing'}
+for at in range(7,57,7):
+    with patch.object(worker.time,'monotonic',return_value=at):worker.record_throughput(runtime,1,7)
+    with patch.object(worker.time,'monotonic',return_value=at+6):
+        snapshot=worker.throughput_snapshot(runtime)
+        assert snapshot['jobs_per_second']>0 and snapshot['window_seconds']==30
+with patch.object(worker.time,'monotonic',return_value=86):
+    assert worker.throughput_snapshot(runtime)['jobs_per_second']==0 # Never invent progress, even while computing.
+print('PASS 30-second completed-work average, long-job gaps, real idle decay and session totals')

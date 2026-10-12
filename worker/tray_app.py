@@ -39,7 +39,7 @@ from PIL import Image, ImageDraw
 
 APP_NAME="Enigma Volunteer Grid"
 
-APP_VERSION="0.5.1"
+APP_VERSION="0.5.3"
 
 BG="#0b1020";CARD="#131c31";CARD2="#18233c";TEXT="#f4f7fb";MUTED="#98a6c2"
 
@@ -768,7 +768,7 @@ class App:
 
         self.temperature_chart.pack(fill="x",pady=(4,10))
 
-        self.label(m,"Processing throughput · rolling 2 minutes",9,MUTED,True).pack(anchor="w")
+        self.label(m,"Completed work · 30-second average · rolling 2 minutes",9,MUTED,True).pack(anchor="w")
 
         self.units_chart=HistoryChart(m,[("Units/s","units_per_second",ACCENT)],height=130,dynamic=True)
 

@@ -32,7 +32,7 @@ except Exception as _update_ex:
     UpdateManager=None
     UPDATE_IMPORT_ERROR=repr(_update_ex)
 
-VERSION="0.5.1"
+VERSION="0.5.3"
 SOURCE_ROOT=Path(__file__).resolve().parents[1]
 FROZEN=bool(getattr(sys,"frozen",False))
 ROOT=Path(getattr(sys,"_MEIPASS",SOURCE_ROOT))
@@ -368,7 +368,14 @@ def request_batch_work(state,runtime,*,take=True):
     # safer than assuming that a reservation is still ours after a long pause.
     if queued and any(float(item['expires_at'])<=time.time() for item in queued):
         queued=[];runtime['_lease_queue']=queued
-    if queued and take:
+    # For the small portable window, consume ready prefetch before dispatch.
+    # Otherwise a
+    # replay-only response occupies _batch_pending until that queue is empty,
+    # preventing replacement work from being prefetched as uploads free slots.
+    # Never wait on network while usable queued work remains.
+    pending_ready=bool(runtime.get('active_engine')=='portable_event_v1' and
+                       runtime.get('_batch_pending') and runtime['_batch_pending'][0].done())
+    if queued and take and not pending_ready:
         if time.monotonic()-runtime.get('_batch_controls_at',0)>=20:
             control=heartbeat_once(state,runtime)
             runtime['_batch_controls']=control
@@ -498,13 +505,16 @@ def record_throughput(runtime, units, compute_seconds):
 
 @runtime_guard
 def throughput_snapshot(runtime):
-    # A wall-time window includes allocation, durable writes and upload stalls.
+    # Completed work over wall time, not inferred in-flight progress. Thirty
+    # seconds avoids empty five-second buckets for ordinary 5-7 second units;
+    # allocation, durable writes and upload stalls still reduce this average.
+    window=30.0
     now=time.monotonic()
     samples=runtime.setdefault('_throughput_samples',[])
-    samples[:]=[(at,units) for at,units in samples if now-at<5.0]
+    samples[:]=[(at,units) for at,units in samples if now-at<window]
     result=dict(runtime.get('throughput',{}))
-    result.update(units_per_second=sum(units for _,units in samples)/5.0,
-                  jobs_per_second=len(samples)/5.0,window_seconds=5.0,sampled_at=time.time())
+    result.update(units_per_second=sum(units for _,units in samples)/window,
+                  jobs_per_second=len(samples)/window,window_seconds=window,sampled_at=time.time())
     return result
 
 
@@ -717,18 +727,6 @@ def portable_batch_blocks(lease,runtime,state_path,text,joint,scorers):
         or (joint and (not settings.get("allow_cpu",True) or settings.get("cpu_percent")!=100))):
         runtime["portable_batch_reason"]="Automatic check requires full-duty CPU and GPU settings"
         return DEFAULT_BLOCKS
-    sample=runtime.get("telemetry") or {}
-    free_gb=sample.get("available_gb")
-    if not isinstance(free_gb,(int,float)) or not math.isfinite(free_gb) or free_gb<2:
-        runtime["portable_batch_reason"]="Automatic check deferred for memory headroom"
-        return DEFAULT_BLOCKS
-    prior_unit_seconds=runtime.get("_portable_last_unit_seconds")
-    # The pilot compares twelve full units; never benchmark an invented
-    # smaller workload. Wait for one actual unit timing before starting it.
-    if (not isinstance(prior_unit_seconds,(int,float)) or
-        not math.isfinite(prior_unit_seconds) or prior_unit_seconds<=0):
-        runtime["portable_batch_reason"]="Waiting for one compatible unit timing"
-        return DEFAULT_BLOCKS
     cfg=lease["config"]
     scope=scope_for(cfg,text,"joint" if joint else "gpu")
     if scope["count"]<4096:return DEFAULT_BLOCKS
@@ -757,7 +755,25 @@ def portable_batch_blocks(lease,runtime,state_path,text,joint,scorers):
                 runtime["portable_batch_reason"]="Using four blocks pending this workload's qualification"
         selected=runtime["_portable_batch_blocks"]
         active=runtime.get("_portable_batch_qualification")
-        if runtime["_portable_batch_profile_valid"]:return selected
+        if runtime["_portable_batch_profile_valid"]:
+            # Reuse the exact device/code/scope result without launching a
+            # second process. Its OpenCL buffers already have capacity for 16
+            # cohorts. The headroom below protects the extra benchmark child,
+            # not ordinary production reuse of an already qualified profile.
+            runtime["portable_batch_reason"]="Qualified on this device and workload"
+            return selected
+        sample=runtime.get("telemetry") or {}
+        free_gb=sample.get("available_gb")
+        if not isinstance(free_gb,(int,float)) or not math.isfinite(free_gb) or free_gb<2:
+            runtime["portable_batch_reason"]="Automatic check deferred for memory headroom"
+            return selected
+        prior_unit_seconds=runtime.get("_portable_last_unit_seconds")
+        # The pilot compares twelve full units; never benchmark an invented
+        # smaller workload. Wait for one actual unit timing before starting it.
+        if (not isinstance(prior_unit_seconds,(int,float)) or
+            not math.isfinite(prior_unit_seconds) or prior_unit_seconds<=0):
+            runtime["portable_batch_reason"]="Waiting for one compatible unit timing"
+            return selected
         if active and active["thread"].is_alive():
             runtime["portable_batch_reason"]="Checking another portable workload; using four blocks"
             return selected

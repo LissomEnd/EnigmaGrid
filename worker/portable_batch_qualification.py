@@ -29,6 +29,85 @@ ASSETS = (
 )
 
 
+def windows_memory_sample():
+    """Optional current-process diagnostics; no process IDs or new dependency.
+
+    GetProcessMemoryInfo/PROCESS_MEMORY_COUNTERS_EX reports process-lifetime
+    peaks. GlobalMemoryStatusEx is a point-in-time system observation, not an
+    attribution of other programs' memory to this child.
+    """
+    if os.name != "nt":return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        class ProcessMemory(ctypes.Structure):
+            _fields_=[("cb",wintypes.DWORD),("PageFaultCount",wintypes.DWORD)]+[
+                (name,ctypes.c_size_t) for name in ("PeakWorkingSetSize","WorkingSetSize",
+                "QuotaPeakPagedPoolUsage","QuotaPagedPoolUsage","QuotaPeakNonPagedPoolUsage",
+                "QuotaNonPagedPoolUsage","PagefileUsage","PeakPagefileUsage","PrivateUsage")]
+        class SystemMemory(ctypes.Structure):
+            _fields_=[("length",wintypes.DWORD),("load",wintypes.DWORD)]+[
+                (name,ctypes.c_ulonglong) for name in ("total_phys","available_phys",
+                "total_pagefile","available_pagefile","total_virtual","available_virtual","extended")]
+        kernel=ctypes.WinDLL("kernel32",use_last_error=True)
+        psapi=ctypes.WinDLL("psapi",use_last_error=True)
+        kernel.GetCurrentProcess.argtypes=[];kernel.GetCurrentProcess.restype=wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes=[wintypes.HANDLE,ctypes.POINTER(ProcessMemory),wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype=wintypes.BOOL
+        kernel.GlobalMemoryStatusEx.argtypes=[ctypes.POINTER(SystemMemory)]
+        kernel.GlobalMemoryStatusEx.restype=wintypes.BOOL
+        out={}
+        process=ProcessMemory();process.cb=ctypes.sizeof(process)
+        if psapi.GetProcessMemoryInfo(kernel.GetCurrentProcess(),ctypes.byref(process),process.cb):
+            out.update(working_set_bytes=int(process.WorkingSetSize),
+                peak_working_set_bytes=int(process.PeakWorkingSetSize),
+                private_commit_bytes=int(process.PrivateUsage),
+                peak_private_commit_bytes=int(process.PeakPagefileUsage))
+        system=SystemMemory();system.length=ctypes.sizeof(system)
+        if kernel.GlobalMemoryStatusEx(ctypes.byref(system)):
+            out["system_available_bytes"]=int(system.available_phys)
+        return out or None
+    except Exception:
+        return None  # Diagnostics must not invalidate scientific qualification.
+
+
+class QualificationMemoryEvidence:
+    """Bounded scalar aggregation; sample no more than four times per second."""
+    FIELDS=("working_set_bytes","peak_working_set_bytes","private_commit_bytes",
+            "peak_private_commit_bytes","system_available_bytes")
+    def __init__(self,sampler=windows_memory_sample,clock=time.monotonic):
+        self.sampler=sampler;self.clock=clock;self.last_at=None
+        self.samples=0;self.unavailable=0;self.latest={};self.maximum={};self.minimum_available=None
+
+    def sample(self,force=False):
+        try:
+            at=self.clock()
+            if not force and self.last_at is not None and at-self.last_at<.25:return
+            self.last_at=at
+            raw=self.sampler()
+            if not isinstance(raw,dict):self.unavailable+=1;return
+            valid={key:raw[key] for key in self.FIELDS
+                   if type(raw.get(key)) is int and 0<=raw[key]<2**64}
+            if not valid:self.unavailable+=1;return
+            self.samples+=1
+            self.latest.update(valid)
+            for key,value in valid.items():
+                if key=="system_available_bytes":
+                    self.minimum_available=value if self.minimum_available is None else min(self.minimum_available,value)
+                else:self.maximum[key]=max(self.maximum.get(key,0),value)
+        except Exception:
+            self.unavailable+=1
+
+    def report(self):
+        return dict(format="qualification-memory-v1",samples=self.samples,
+                    unavailable_samples=self.unavailable,
+                    latest={key:self.latest.get(key) for key in self.FIELDS},
+                    maximum={key:self.maximum.get(key) for key in self.FIELDS if key!="system_available_bytes"},
+                    min_system_available_bytes=self.minimum_available,
+                    process_peaks_scope="child process lifetime; excludes parent and other processes",
+                    system_min_scope="sampled at checkpoints; gaps and unrelated system activity possible")
+
+
 def scope_for(config, ciphertext, mode):
     if mode not in ("joint", "gpu"):
         raise ValueError("Invalid portable resource mode")
@@ -178,6 +257,8 @@ def stop_owned_process(process, grace_seconds=.5):
 def qualification_child(send, run_portable, sample_lease, settings, scope,
                         expected_hardware, assets, deadline_seconds):
     """No server, identity, outbox, durable receipts, or production GPU context."""
+    memory=QualificationMemoryEvidence()
+    memory.sample(force=True)
     try:
         worker = run_portable.__globals__
         if os.name == "nt":
@@ -219,6 +300,7 @@ def qualification_child(send, run_portable, sample_lease, settings, scope,
             raise ValueError("Portable GPU score parity failed")
         deadline = time.monotonic() + deadline_seconds
         def checkpoint():
+            memory.sample()
             if time.monotonic() >= deadline:
                 raise InterruptedError("Qualification deadline reached")
         local_runtime = {"settings": settings, "enabled": True}
@@ -230,6 +312,8 @@ def qualification_child(send, run_portable, sample_lease, settings, scope,
             result = qualify(execute, scope, expected_hardware, assets,
                              checkpoint=checkpoint)
             checkpoint()
+            memory.sample(force=True)
+            result["memory_evidence"]=memory.report()
             send.send(result)
         finally:
             worker["release_portable_executor"](local_runtime)

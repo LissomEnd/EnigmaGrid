@@ -72,6 +72,23 @@ def main():
   with patch.object(worker,'post',side_effect=replay_during_ack),patch.object(worker,'meta',return_value={}):
    assert worker.request_work(state,runtime)[0]['lease']['id']=='1'
    assert all(item['id']!='0' for item in runtime['_lease_queue'])
+ # A completed replay-only prefetch must not monopolize the slot until the
+ # old queue drains. An unfinished future must never block usable queued work.
+ from concurrent.futures import Future
+ with tempfile.TemporaryDirectory() as tmp:
+  q=worker.result_outbox(Path(tmp)/'client.json',{**state,'device_id':'test'})
+  q.append({'lease_id':'0','work_token':'test','result':{}});q.acknowledge('0')
+  ready=Future();ready.set_result(({'leases':leases[:3],**controls},.2))
+  runtime={'_batch_requests':True,'_uploader':SimpleNamespace(queue=q),
+           'active_engine':'portable_event_v1',
+           '_lease_queue':list(leases[1:3]),'_batch_pending':(ready,{'0'},0)}
+  with patch.object(worker,'post',side_effect=AssertionError('Unexpected network wait')),patch.object(worker,'meta',return_value={}):
+   assert worker.request_work(state,runtime)[0]['lease']['id']=='1'
+   assert '_batch_pending' not in runtime
+   assert [x['id'] for x in runtime['_lease_queue']]==['2']
+   waiting=Future();runtime['_batch_pending']=(waiting,set(),runtime.get('_control_revision',0))
+   assert worker.request_work(state,runtime)[0]['lease']['id']=='2'
+   assert runtime['_batch_pending'][0] is waiting and not waiting.done()
  # Exercise the complete worker loop: 32 completions and one overlapping refill,
  # durable outbox drained, then an explicit stop without replaying completed work.
  with tempfile.TemporaryDirectory() as tmp:

@@ -114,6 +114,47 @@ class DummyScorer:
     device=DummyDevice()
     def __init__(self,*_args):pass
     def __call__(self,keys):return np.zeros(len(keys),dtype=np.int32)
+
+# An existing exact profile needs no extra benchmark process or prior timing.
+# The two-GB budget remains mandatory only when starting an unqualified pilot.
+from portable_batch_qualification import scope_for
+with tempfile.TemporaryDirectory() as temporary:
+    state=Path(temporary)/"state.json"
+    current_scope=scope_for(lease["config"],message,"joint")
+    identity=(json.dumps(current_scope,sort_keys=True),"gpu","assets")
+    record=worker.portable_batch_profile_path(state,identity)
+    save_profile(record,dict(format=FORMAT,hardware="gpu",assets="assets",
+        scope=current_scope,parity_passed=True,trials=rows,selected_blocks=16))
+    with patch("portable_batch_qualification.asset_fingerprint",return_value="assets"),\
+         patch("portable_batch_qualification.device_fingerprint",return_value="gpu"),\
+         patch("portable_batch_qualification.spawn_qualification") as spawn:
+        for available in (1.94,None):
+            runtime={"settings":{"allow_cpu":True,"allow_gpu":True,
+                     "cpu_percent":100,"gpu_percent":100},
+                     "telemetry":{"available_gb":available}}
+            assert worker.portable_batch_blocks(lease,runtime,state,message,True,[DummyScorer()])==16
+            assert "Qualified" in runtime["portable_batch_reason"]
+            runtime["portable_batch_reason"]="Automatic check deferred for memory headroom"
+            assert worker.portable_batch_blocks(lease,runtime,state,message,True,[DummyScorer()])==16
+            assert "Qualified" in runtime["portable_batch_reason"]
+        spawn.assert_not_called()
+        record.unlink()
+        for available,prior,reason in ((1.94,4,"memory headroom"),(8,None,"unit timing")):
+            runtime={"settings":{"allow_cpu":True,"allow_gpu":True,
+                     "cpu_percent":100,"gpu_percent":100},
+                     "telemetry":{"available_gb":available},"_portable_last_unit_seconds":prior}
+            assert worker.portable_batch_blocks(lease,runtime,state,message,True,[DummyScorer()])==4
+            assert reason in runtime["portable_batch_reason"]
+            assert not runtime.get("_portable_batch_attempted")
+        spawn.assert_not_called()
+        save_profile(record,dict(format=FORMAT,hardware="gpu",assets="stale-assets",
+            scope=current_scope,parity_passed=True,trials=rows,selected_blocks=16))
+        runtime={"settings":{"allow_cpu":True,"allow_gpu":True,
+                 "cpu_percent":100,"gpu_percent":100},"telemetry":{"available_gb":1.94}}
+        assert worker.portable_batch_blocks(lease,runtime,state,message,True,[DummyScorer()])==4
+        assert "memory headroom" in runtime["portable_batch_reason"]
+        spawn.assert_not_called()
+
 with tempfile.TemporaryDirectory() as temporary:
     runtime={"settings":{"allow_cpu":True,"allow_gpu":True,
                          "cpu_percent":100,"gpu_percent":100},
