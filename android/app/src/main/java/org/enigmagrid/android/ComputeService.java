@@ -47,6 +47,8 @@ public final class ComputeService extends Service {
     private volatile GpuProcess promotedGpu;
     private volatile org.enigmagrid.core.AdaptiveRows promotedRows;
     private volatile GpuProcess activeGpu;
+    private final Object portableBindingLock=new Object();
+    private GpuProcess portableGpu;
     private volatile org.enigmagrid.core.AdaptiveRows activeRows;
     private boolean gridMode;
 
@@ -116,7 +118,7 @@ public final class ComputeService extends Service {
         SharedPreferences lifecycle=getSharedPreferences("worker-lifecycle",0);
         String action=intent==null?(lifecycle.getBoolean("requested",false)?"work":"stop"):intent.getAction();
 
-        if("stop".equals(action)){lifecycle.edit().putBoolean("requested",false).putBoolean("paused",false).commit();stopping=true;if(network!=null)network.cancel();if(control!=null)control.stop();if(worker!=null)worker.interrupt();else stopSelf();return START_NOT_STICKY;}
+        if("stop".equals(action)){lifecycle.edit().putBoolean("requested",false).putBoolean("paused",false).commit();stopping=true;closePortableBinding();if(network!=null)network.cancel();if(control!=null)control.stop();if(worker!=null)worker.interrupt();else stopSelf();return START_NOT_STICKY;}
 
         if("pause".equals(action)){lifecycle.edit().putBoolean("paused",true).commit();if(network!=null)network.pauseScheduling();if(control!=null)control.pause();else stopSelf();return gridMode?START_STICKY:START_NOT_STICKY;}
 
@@ -252,6 +254,7 @@ public final class ComputeService extends Service {
                         for(long remaining=waitMillis;remaining>0;remaining-=100){if(control.getAsBoolean())throw new java.util.concurrent.CancellationException();Thread.sleep(Math.min(100,remaining));}
                     }
                     }finally{
+                        closePortableBinding();
                         network.stopPresence();
                         Thread check=automaticGpuCheck;if(check!=null){check.interrupt();check.join(8000);automaticGpuCheck=null;}
                         GpuProcess promoted=promotedGpu;promotedGpu=null;if(promoted!=null)promoted.close();promotedRows=null;
@@ -302,16 +305,41 @@ public final class ComputeService extends Service {
         ((android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(memory);
         return !memory.lowMemory&&memory.availMem>=512L*1024*1024;
     }
+    private void discardPortableBinding(GpuProcess failed){
+        synchronized(portableBindingLock){if(portableGpu==failed)portableGpu=null;}
+        failed.close();
+    }
+    private void closePortableBinding(){
+        GpuProcess previous;
+        synchronized(portableBindingLock){previous=portableGpu;portableGpu=null;}
+        if(previous!=null)previous.close();
+    }
     private org.enigmagrid.core.PortableGpuSearch.Backend portableBackend(){
-        GpuProcess session=new GpuProcess(getApplicationContext());
+        final GpuProcess session;
+        synchronized(portableBindingLock){
+            if(stopping||destroyed)throw new java.util.concurrent.CancellationException();
+            if(portableGpu==null||portableGpu.isClosed())portableGpu=new GpuProcess(getApplicationContext());
+            session=portableGpu;
+        }
         return new org.enigmagrid.core.PortableGpuSearch.Backend(){
             public int begin(int[] reference,int[] state,int[] params){
                 try{return session.portableBegin(reference,state,params);}
-                catch(RuntimeException|Error failure){session.close();throw failure;}
+                catch(RuntimeException|Error failure){discardPortableBinding(session);throw failure;}
             }
-            public void step(int id,int[] tape,int iterations){session.portableStep(id,tape,iterations);}
-            public int[] finish(int id){return session.portableFinish(id);}
-            public void close(int id){try{session.portableClose(id);}finally{session.close();}}
+            public void step(int id,int[] tape,int iterations){
+                try{session.portableStep(id,tape,iterations);}
+                catch(RuntimeException|Error failure){discardPortableBinding(session);throw failure;}
+            }
+            public int[] finish(int id){
+                try{return session.portableFinish(id);}
+                catch(RuntimeException|Error failure){discardPortableBinding(session);throw failure;}
+            }
+            public void close(int id){
+                try{session.portableClose(id);}
+                catch(RuntimeException|Error failure){discardPortableBinding(session);throw failure;}
+                // End only this native session. Keep the binding and idle Vulkan
+                // pipeline alive until worker stop, service destroy, or failure.
+            }
         };
     }
 
@@ -469,6 +497,6 @@ public final class ComputeService extends Service {
 
     }
 
-    @Override public void onDestroy(){MainActivity.computeStarting=false;active=false;destroyed=true;if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();Thread gpuCheck=automaticGpuCheck;if(gpuCheck!=null)gpuCheck.interrupt();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
+    @Override public void onDestroy(){MainActivity.computeStarting=false;active=false;destroyed=true;closePortableBinding();if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();if(network!=null)network.cancel();Thread gpuCheck=automaticGpuCheck;if(gpuCheck!=null)gpuCheck.interrupt();handler.removeCallbacks(report);if(control!=null)control.stop();if(worker!=null)worker.interrupt();stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();}
 
 }

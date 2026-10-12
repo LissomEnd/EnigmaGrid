@@ -68,6 +68,7 @@ final class GpuProcess implements AutoCloseable {
         }));
         main.post(()->{if(closed)return;try{bound=this.context.bindService(new Intent(this.context,GpuService.class),connection,Context.BIND_AUTO_CREATE);if(!bound)fail("GPU bind failed");}catch(RuntimeException e){fail("GPU bind failed");}});
     }
+    boolean isClosed(){return closed;}
     int[] rows(int[] input){return dispatch(1,input);}
     int[] solve(int[] input){return dispatch(2,input);}
     int[] solveKeys(int[] input){return dispatch(3,input);}

@@ -65,7 +65,8 @@ public class PortableEngineHybridCheck{
   int cpu=((Number)hybrid.diagnostics().get("cpu_cohorts")).intValue(),gpu=((Number)hybrid.diagnostics().get("gpu_cohorts")).intValue();
   check(cpu+gpu==16&&cpu>0&&gpu>0&&PortableSearchJob.calls.size()==1,"disjoint work split");
   b.fail=true;PortableSearchJob.calls.clear();check(hybrid.run(lease,()->false).equals(expected),"GPU failure partial CPU fallback");check(PortableSearchJob.calls.size()==2,"only GPU subset recomputed");
-  int calls=b.calls;hybrid.run(lease,()->false);check(b.calls==calls,"failed qualification not repeated");check(b.closes==b.calls,"all sessions closed");
+  int calls=b.calls;Object historical=hybrid.diagnostics().get("gpu_seconds");Object stages=hybrid.diagnostics().get("last_gpu_stages");hybrid.run(lease,()->false);check(b.calls==calls,"failed qualification not repeated");
+  check(historical.equals(hybrid.diagnostics().get("gpu_seconds"))&&stages.equals(hybrid.diagnostics().get("last_gpu_stages")),"fallback preserves measured timings");check(b.closes==b.calls,"all sessions closed");
   PortableJobEngine bad=create(args[0]);Backend wrong=new Backend();wrong.bad=true;bad.configureGpu(()->wrong,()->true,()->false);
   check(bad.run(lease,()->false).equals(expected),"invalid GPU never emitted");bad.run(lease,()->false);check(wrong.calls==1,"parity failure cached");
   PortableJobEngine slow=create(args[0]);Backend sluggish=new Backend();sluggish.slow=true;slow.configureGpu(()->sluggish,()->true,()->false);

@@ -439,8 +439,6 @@ public final class MainActivity extends Activity {
 
         label(monitoring,"Units / second - 30-second average",15);
         TelemetryChartView unitsChart=new TelemetryChartView(this,TelemetryChartView.RATE,"Units","");monitoring.addView(unitsChart,new LinearLayout.LayoutParams(-1,dp(170)));
-        label(monitoring,"Jobs / second - 30-second average",15);
-        TelemetryChartView jobsChart=new TelemetryChartView(this,TelemetryChartView.RATE,"Jobs","");monitoring.addView(jobsChart,new LinearLayout.LayoutParams(-1,dp(170)));
         TextView queueMetrics=label(monitoring,"Ready — · Running — · To send —",14);
         TextView stageMetrics=label(monitoring,"Compute — · Save — · Network —",14);
         for(TextView metric:new TextView[]{queueMetrics,stageMetrics}){
@@ -508,7 +506,6 @@ public final class MainActivity extends Activity {
             temperatureChart.add(sample.cpuTempC,sample.gpuTempC);
 
             unitsChart.add(fresh?sample.unitsPerSecond:Float.NaN,Float.NaN);
-            jobsChart.add(fresh?sample.jobsPerSecond:Float.NaN,Float.NaN);
 
             uiHandler.postDelayed(monitorRefresh,1000);
 

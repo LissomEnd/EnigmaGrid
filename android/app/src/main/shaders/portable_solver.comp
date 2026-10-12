@@ -15,7 +15,12 @@ layout(push_constant) uniform Parameters {
 // state stride86: current key42, best key42, current cost, best cost.
 // tape: ((iteration * trajectories + trajectory) * 5) + op,a,b,value,allowance.
 const int WIRES=72, QUADS=697, STRIDE=86;
-int mod26(int x){int r=x%26;return r<0?r+26:r;}
+// Native validation and mutation preserve positions/rings/wire values in 0..25.
+// Rotor x+shift and wire-shift lie in -25..50 (shift=position-ring).
+// Step +1 lies in 1..26; event -1 in -1..24; event -param in -4..24
+// because param is 1..4. These are ALL callsites; one correction suffices.
+// Do not use this helper for unbounded values without extending its contract.
+int mod26(int x){return x<0?x+26:(x>=26?x-26:x);}
 int forwardRotor(int rotor,int x,int pos,int ring){
     int shift=pos-ring;return mod26(reference[WIRES+1+rotor*26+mod26(x+shift)]-shift);
 }

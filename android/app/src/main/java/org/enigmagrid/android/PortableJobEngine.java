@@ -40,6 +40,8 @@ final class PortableJobEngine {
     private volatile long gpuRetryAfterNanos;
     private volatile int lastCpuCohorts=16,lastGpuCohorts;
     private volatile double lastCpuSeconds,lastGpuSeconds;
+    private volatile int timingCpuCohorts,timingGpuCohorts;
+    private volatile Map<String,Object> lastGpuStages=Collections.emptyMap();
     private static final int[] KINDS={1,2,3,4,5,6};
 
     /** Call once for a new worker/GPU session. Never implicitly retries failed qualification. */
@@ -50,7 +52,9 @@ final class PortableJobEngine {
     }
     Map<String,Object> diagnostics(){
         return object("state",gpuState,"reason",gpuReason,"retry_after_seconds",Math.max(0,(gpuRetryAfterNanos-System.nanoTime())/1e9),"cpu_cohorts",lastCpuCohorts,"gpu_cohorts",lastGpuCohorts,
-                "cpu_seconds",lastCpuSeconds,"gpu_seconds",lastGpuSeconds);
+                "cpu_seconds",lastCpuSeconds,"gpu_seconds",lastGpuSeconds,
+                "timing_cpu_cohorts",timingCpuCohorts,"timing_gpu_cohorts",timingGpuCohorts,
+                "last_gpu_stages",lastGpuStages);
     }
     private static final class GpuAttempt {
         final Thread thread;
@@ -58,6 +62,7 @@ final class PortableJobEngine {
         volatile List<PortableSearchJob.Hit> hits;
         volatile Throwable failure;
         volatile double seconds;
+        long factoryNs,beginNs,stepNs,finishNs,closeNs;int stepCalls;
         GpuAttempt(String name,java.util.function.Consumer<GpuAttempt> action){
             thread=new Thread(()->action.accept(this),name);thread.setDaemon(true);
         }
@@ -78,9 +83,17 @@ final class PortableJobEngine {
             try{
                 BooleanSupplier stop=()->task.abort.get()||cancel.getAsBoolean()||!gpuEligible.getAsBoolean()||gpuStop.getAsBoolean();
                 checkCancelled(stop);
+                long factoryStarted=System.nanoTime();
+                PortableGpuSearch.Backend delegate=gpuFactory.create();task.factoryNs=System.nanoTime()-factoryStarted;
+                PortableGpuSearch.Backend timed=new PortableGpuSearch.Backend(){
+                    public int begin(int[] r,int[] state,int[] params)throws Exception{long at=System.nanoTime();try{return delegate.begin(r,state,params);}finally{task.beginNs+=System.nanoTime()-at;}}
+                    public void step(int id,int[] tape,int n)throws Exception{long at=System.nanoTime();try{delegate.step(id,tape,n);}finally{task.stepNs+=System.nanoTime()-at;task.stepCalls++;}}
+                    public int[] finish(int id)throws Exception{long at=System.nanoTime();try{return delegate.finish(id);}finally{task.finishNs+=System.nanoTime()-at;}}
+                    public void close(int id)throws Exception{long at=System.nanoTime();try{delegate.close(id);}finally{task.closeNs+=System.nanoTime()-at;}}
+                };
                 task.hits=PortableGpuSearch.run(cipher,quadgrams,job.seed+first*256L,cohorts*256,
                         job.topk,job.minPairs,job.maxPairs,KINDS,
-                        new ArrayList<>(job.states.subList(first,first+cohorts)),stop,gpuFactory.create());
+                        new ArrayList<>(job.states.subList(first,first+cohorts)),stop,timed);
             }catch(Throwable failure){task.failure=failure;}
             finally{task.seconds=Math.max(.000001,(System.nanoTime()-started)/1e9);GPU_SLOT.release();}
         });
@@ -120,7 +133,7 @@ final class PortableJobEngine {
     }
     private List<PortableSearchJob.Hit> compute(Plan job,BooleanSupplier cancel){
         int profile=job.minPairs==0?0:job.minPairs==4?1:2;
-        lastCpuCohorts=16;lastGpuCohorts=0;lastCpuSeconds=0;lastGpuSeconds=0;
+        lastCpuCohorts=16;lastGpuCohorts=0;
         if(gpuRetryAfterNanos>System.nanoTime()){
             gpuState="deferred";gpuReason="resident_session_cleanup";return cpu(job,0,16,cancel);
         }
@@ -142,6 +155,12 @@ final class PortableJobEngine {
             List<PortableSearchJob.Hit> hits=cpu(job,0,cpuCohorts,cancel);
             lastCpuSeconds=Math.max(.000001,(System.nanoTime()-cpuStarted)/1e9);
             gpu.join(false);lastGpuSeconds=gpu.seconds;
+            timingCpuCohorts=cpuCohorts;timingGpuCohorts=gpuCohorts;
+            long backendNs=gpu.factoryNs+gpu.beginNs+gpu.stepNs+gpu.finishNs+gpu.closeNs;
+            lastGpuStages=object("factory_seconds",gpu.factoryNs/1e9,"begin_seconds",gpu.beginNs/1e9,
+                    "step_seconds",gpu.stepNs/1e9,"finish_seconds",gpu.finishNs/1e9,
+                    "close_seconds",gpu.closeNs/1e9,"step_calls",gpu.stepCalls,
+                    "host_prepare_verify_control_seconds",Math.max(0,gpu.seconds-backendNs/1e9));
             checkCancelled(cancel);
             if(gpu.failure instanceof Error&&!(gpu.failure instanceof LinkageError))throw (Error)gpu.failure;
             if(gpu.failure!=null){

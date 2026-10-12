@@ -82,10 +82,17 @@ VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(physical,&props);
 namespace portable_backend {
 std::mutex mutex;
 std::unique_ptr<PortableCompute> active;
+// One idle context, never an additional active session. Its fence has completed
+// before it is cached. A shader change or larger cohort recreates the context.
+std::unique_ptr<PortableCompute> idle;
+std::vector<uint32_t> contextCode;
+std::vector<int> contextReference;
+void retire(){idle=std::move(active);}
+
 bool poisoned=false;
 int serial=1,lastClosed=0;
 void require(bool ok,const char* message){if(!ok)throw std::invalid_argument(message);}
-void abandon(){if(active){if(active->inFlight){poisoned=true;(void)active.release();}else active.reset();}}
+void abandon(){idle.reset();contextCode.clear();contextReference.clear();if(active){if(active->inFlight){poisoned=true;(void)active.release();}else active.reset();}}
 PortableCompute& get(int id){require(!poisoned,"PortableGpuTimeout: process restart required");require(active&&id==serial,"Stale portable GPU session");return *active;}
 void validate(const std::vector<int>& ref,const std::vector<int>& state,const std::vector<int>& p,const std::vector<uint32_t>& code){
  require(p.size()==12,"Portable parameter length");int n=p[0];require(n>=256&&n<=4096&&n%256==0&&p[1]==0&&p[2]==1,"Portable trajectory scope");require(p[3]>=0&&p[4]<=13&&p[3]<=p[4]&&p[5]>=1&&p[5]<=6,"Portable pair/kind bounds");
@@ -99,10 +106,14 @@ void validate(const std::vector<int>& ref,const std::vector<int>& state,const st
 }
 int begin(const std::vector<int>& ref,const std::vector<int>& input,const std::vector<int>& p,const std::vector<uint32_t>& code){std::lock_guard<std::mutex> lock(mutex);require(!poisoned,"PortableGpuTimeout: process restart required");require(!active,"Portable GPU session already active");validate(ref,input,p,code);
  if(serial==1){std::random_device random;serial=1+int(random()%1000000000u);}require(serial<INT_MAX,"Portable session identifiers exhausted");++serial;
- try{active.reset(new PortableCompute());active->init(code,p[0]);std::copy(p.begin(),p.end(),active->parameters);auto state=input;for(int i=0;i<p[0];i++)std::fill(state.begin()+i*86+42,state.begin()+(i+1)*86,0);enigmagrid::uploadHost(active->device,active->memory[0],active->coherent[0],ref.data(),ref.size()*4);enigmagrid::uploadHost(active->device,active->memory[2],active->coherent[2],state.data(),state.size()*4);active->dispatch(active->parameters);return serial;}catch(...){abandon();throw;}}
+ try{
+ if(idle&&idle->capacity>=uint32_t(p[0])&&contextCode==code)active=std::move(idle);
+ else {idle.reset();contextCode.clear();contextReference.clear();active.reset(new PortableCompute());active->init(code,p[0]);contextCode=code;}
+ active->trajectories=p[0];active->completed=0;
+ std::copy(p.begin(),p.end(),active->parameters);auto state=input;for(int i=0;i<p[0];i++)std::fill(state.begin()+i*86+42,state.begin()+(i+1)*86,0);if(contextReference!=ref){enigmagrid::uploadHost(active->device,active->memory[0],active->coherent[0],ref.data(),ref.size()*4);contextReference=ref;}enigmagrid::uploadHost(active->device,active->memory[2],active->coherent[2],state.data(),state.size()*4);active->dispatch(active->parameters);return serial;}catch(...){abandon();throw;}}
 void step(int id,const std::vector<int>& tape,int iterations){std::lock_guard<std::mutex> lock(mutex);auto& c=get(id);try{require(iterations>=1&&iterations<=16&&c.completed+iterations<=512&&tape.size()==size_t(iterations)*c.trajectories*5,"Portable tape length");for(size_t i=0;i<tape.size();i+=5)require(tape[i]>=0&&tape[i]<100&&tape[i+1]>=0&&tape[i+1]<26&&tape[i+2]>=0&&tape[i+2]<26&&tape[i+3]>=0&&tape[i+3]<(1<<30)&&tape[i+4]>=0&&tape[i+4]<=38000,"Portable tape bounds");enigmagrid::uploadHost(c.device,c.memory[1],c.coherent[1],tape.data(),tape.size()*4);c.parameters[1]=iterations;c.parameters[2]=0;c.dispatch(c.parameters);c.completed+=iterations;}catch(...){abandon();throw;}}
-std::vector<int> finish(int id){std::lock_guard<std::mutex> lock(mutex);auto& c=get(id);try{std::vector<int> state(c.trajectories*86);enigmagrid::downloadHost(c.device,c.memory[2],c.coherent[2],state.data(),state.size()*4);active.reset();lastClosed=id;return state;}catch(...){abandon();throw;}}
-void close(int id){std::lock_guard<std::mutex> lock(mutex);if(id==lastClosed&&!active)return;get(id);active.reset();lastClosed=id;}
+std::vector<int> finish(int id){std::lock_guard<std::mutex> lock(mutex);auto& c=get(id);try{std::vector<int> state(c.trajectories*86);enigmagrid::downloadHost(c.device,c.memory[2],c.coherent[2],state.data(),state.size()*4);retire();lastClosed=id;return state;}catch(...){abandon();throw;}}
+void close(int id){std::lock_guard<std::mutex> lock(mutex);if(id==lastClosed&&!active)return;get(id);retire();lastClosed=id;}
 bool isPoisoned(){std::lock_guard<std::mutex> lock(mutex);return poisoned;}
 }
 #ifndef ENIGMAGRID_NO_JNI
