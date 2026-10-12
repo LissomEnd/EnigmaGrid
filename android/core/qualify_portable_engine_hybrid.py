@@ -61,19 +61,30 @@ public class PortableEngineHybridCheck{
   PortableJobEngine hybrid=create(args[0]);Backend b=new Backend();AtomicBoolean eligible=new AtomicBoolean(false);hybrid.configureGpu(()->b,eligible::get,()->false);
   check(hybrid.run(lease,()->false).equals(expected)&&b.calls==0,"lower sliders must defer");
   eligible.set(true);check(hybrid.run(lease,()->false).equals(expected),"qualification CPU receipt");check(hybrid.diagnostics().get("state").equals("qualified"),"qualification timing gate");
-  PortableSearchJob.calls.clear();check(hybrid.run(lease,()->false).equals(expected),"hybrid receipt");
+  hybrid.run(lease,()->false);PortableSearchJob.calls.clear();check(hybrid.run(lease,()->false).equals(expected),"hybrid receipt");
   int cpu=((Number)hybrid.diagnostics().get("cpu_cohorts")).intValue(),gpu=((Number)hybrid.diagnostics().get("gpu_cohorts")).intValue();
   check(cpu+gpu==16&&cpu>0&&gpu>0&&PortableSearchJob.calls.size()==1,"disjoint work split");
-  b.fail=true;PortableSearchJob.calls.clear();check(hybrid.run(lease,()->false).equals(expected),"GPU failure partial CPU fallback");check(PortableSearchJob.calls.size()==2,"only GPU subset recomputed");
+  hybrid.run(lease,()->false);b.fail=true;PortableSearchJob.calls.clear();check(hybrid.run(lease,()->false).equals(expected),"GPU failure partial CPU fallback");check(PortableSearchJob.calls.size()==2,"only GPU subset recomputed");
   int calls=b.calls;Object historical=hybrid.diagnostics().get("gpu_seconds");Object stages=hybrid.diagnostics().get("last_gpu_stages");hybrid.run(lease,()->false);check(b.calls==calls,"failed qualification not repeated");
   check(historical.equals(hybrid.diagnostics().get("gpu_seconds"))&&stages.equals(hybrid.diagnostics().get("last_gpu_stages")),"fallback preserves measured timings");check(b.closes==b.calls,"all sessions closed");
   PortableJobEngine bad=create(args[0]);Backend wrong=new Backend();wrong.bad=true;bad.configureGpu(()->wrong,()->true,()->false);
   check(bad.run(lease,()->false).equals(expected),"invalid GPU never emitted");bad.run(lease,()->false);check(wrong.calls==1,"parity failure cached");
-  PortableJobEngine slow=create(args[0]);Backend sluggish=new Backend();sluggish.slow=true;slow.configureGpu(()->sluggish,()->true,()->false);
-  check(slow.run(lease,()->false).equals(expected),"cold qualification receipt");check(slow.diagnostics().get("state").equals("warm_trial_pending"),"cold compile not permanently rejected");
-  slow.run(lease,()->false);check(sluggish.calls==2&&slow.diagnostics().get("state").equals("slower"),"one slower warm GPU trial disabled");slow.run(lease,()->false);check(sluggish.calls==2,"no repeated warm trial");
-  PortableJobEngine warmed=create(args[0]);Backend cold=new Backend();cold.slow=true;warmed.configureGpu(()->cold,()->true,()->false);warmed.run(lease,()->false);cold.slow=false;
-  check(warmed.run(lease,()->false).equals(expected)&&cold.calls==2&&warmed.diagnostics().get("state").equals("qualified"),"cold shader then warm gain qualifies");
+  PortableJobEngine.Selector selector=new PortableJobEngine.Selector();
+  for(int i=0;i<3;i++){check(selector.chosen()==0,"anchor first");selector.cpu(4);selector.hybrid(3,3,2);}
+  check(selector.alternate,"CPU dominated split gets one alternate");
+  for(int i=0;i<3;i++){selector.cpu(4);selector.hybrid(2.5,2.4,2.5);}
+  check(selector.cooldown==64&&selector.bestSplit>0,"GPU wall winner retained");
+  for(int i=0;i<64;i++)selector.steady();check(selector.chosen()==0,"bounded rare reevaluation");
+  PortableJobEngine.Selector cpuWinner=new PortableJobEngine.Selector();
+  for(int i=0;i<3;i++){cpuWinner.cpu(2);cpuWinner.hybrid(3,1,3);}
+  check(cpuWinner.bestSplit==0&&cpuWinner.cooldown==64,"CPU wins without parity blacklist");
+  PortableJobEngine.Selector dvfs=new PortableJobEngine.Selector();
+  double[] anchors={2,4,8},hybrids={1.8,3.6,7.2};
+  for(int i=0;i<3;i++){dvfs.cpu(anchors[i]);dvfs.hybrid(hybrids[i],1,hybrids[i]);}
+  check(dvfs.bestSplit>0&&dvfs.baseline==4,"fresh anchors track changing clock speeds");
+  PortableJobEngine.Selector noise=new PortableJobEngine.Selector();
+  for(int i=0;i<3;i++){noise.cpu(4);noise.hybrid(i==0?1:4,1,4);}
+  check(noise.bestSplit==0,"single noisy speedup not enough");
   PortableJobEngine deferred=create(args[0]);Backend changing=new Backend();AtomicBoolean enabled=new AtomicBoolean(true);changing.eligible=enabled;deferred.configureGpu(()->changing,enabled::get,()->false);
   check(deferred.run(lease,()->false).equals(expected),"eligibility change fallback");changing.eligible=null;enabled.set(true);deferred.run(lease,()->false);check(changing.calls==1,"native cleanup cooldown");
   java.lang.reflect.Field deadline=PortableJobEngine.class.getDeclaredField("gpuRetryAfterNanos");deadline.setAccessible(true);deadline.setLong(deferred,0L);
@@ -82,7 +93,7 @@ public class PortableEngineHybridCheck{
   Thread caller=new Thread(()->{try{cancelled.run(lease,stop::get);}catch(CancellationException e){gotCancel.set(true);}});caller.start();
   long until=System.nanoTime()+2000000000L;while(!blocked.entered&&System.nanoTime()<until)Thread.sleep(1);stop.set(true);caller.join(2000);
   check(!caller.isAlive()&&gotCancel.get()&&blocked.closes==1,"cancel closes and joins GPU");
-  System.out.println("PASS defaultCPU,100percent gate, exactqualification, adaptive disjointsplit, GPUsubset fallback, cachedparity/backend/slow rejection, deferredeligibility, cancellation no danglingthread");
+  System.out.println("PASS defaultCPU,100percent gate, exactqualification, adaptive disjointsplit, GPUsubset fallback, cached parity/backend failure, paired CPU anchors, heterogeneous split, DVFS, rare reevaluation, deferredeligibility, cancellation no danglingthread");
  }
 }
 '''

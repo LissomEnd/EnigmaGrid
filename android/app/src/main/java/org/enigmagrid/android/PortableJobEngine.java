@@ -34,8 +34,36 @@ final class PortableJobEngine {
     private BackendFactory gpuFactory;
     private BooleanSupplier gpuEligible=()->false,gpuStop=()->true;
     // Qualification and measured split are scoped to the three distinct pair profiles.
-    private final int[] qualification=new int[3]; // 0 untested, 1 exact/fast, 2 one warm trial, -1 failed, -2 slower
-    private final double[] cpuPerWave=new double[3],gpuPerCohort=new double[3];
+    private final int[] qualification=new int[3]; // 0 untested, 1 exact, -1 failed
+    // Every timing sample below is useful production work, never a duplicate benchmark.
+    static final class Selector {
+        int split=warmGpuCohorts(), bestSplit, samples, cpuCount, hybridCount, cooldown;
+        boolean anchor=true, alternate;
+        final double[] cpu=new double[3], hybrid=new double[3];
+        double bestRatio=1, baseline, measured;
+        int next(){return cooldown>0?0:anchor?0:split;}
+        static double median(double[] values){double[] copy=values.clone();Arrays.sort(copy);return copy[1];}
+        void cpu(double seconds){
+            cpu[samples]=seconds;cpuCount++;anchor=false;
+        }
+        void hybrid(double seconds,double cpuSeconds,double gpuSeconds){
+            hybrid[samples]=seconds;hybridCount++;samples++;anchor=true;
+            if(samples<3)return;
+            baseline=median(cpu);measured=median(hybrid);
+            double ratio=measured/baseline;
+            if(ratio<bestRatio*.95){bestRatio=ratio;bestSplit=split;}
+            // One additional measured split, bounded to leave CPU work available.
+            if(!alternate&&cpuSeconds>gpuSeconds*1.10&&split<15){
+                alternate=true;split=Math.min(15,split+2);samples=0;return;
+            }
+            // A new round starts from fresh paired anchors after 64 useful units.
+            cooldown=64;samples=0;
+        }
+        int chosen(){return cooldown>0?bestSplit:next();}
+        void steady(){if(cooldown>0&&--cooldown==0){samples=0;anchor=true;alternate=false;split=warmGpuCohorts();bestRatio=1;bestSplit=0;}}
+    }
+    private final Selector[] selectors={new Selector(),new Selector(),new Selector()};
+    private volatile int currentProfile;
     private volatile String gpuState="disabled",gpuReason="not_configured";
     private volatile long gpuRetryAfterNanos;
     private volatile int lastCpuCohorts=16,lastGpuCohorts;
@@ -48,13 +76,17 @@ final class PortableJobEngine {
     synchronized void configureGpu(BackendFactory factory,BooleanSupplier eligible100Percent,BooleanSupplier stopGpu){
         gpuFactory=Objects.requireNonNull(factory);gpuEligible=Objects.requireNonNull(eligible100Percent);
         gpuStop=Objects.requireNonNull(stopGpu);Arrays.fill(qualification,0);
-        Arrays.fill(cpuPerWave,0);Arrays.fill(gpuPerCohort,0);gpuState="unqualified";gpuReason="first_unit_parity_required";gpuRetryAfterNanos=0;
+        for(int i=0;i<3;i++)selectors[i]=new Selector();
+        gpuState="unqualified";gpuReason="first_unit_parity_required";gpuRetryAfterNanos=0;
     }
     Map<String,Object> diagnostics(){
         return object("state",gpuState,"reason",gpuReason,"retry_after_seconds",Math.max(0,(gpuRetryAfterNanos-System.nanoTime())/1e9),"cpu_cohorts",lastCpuCohorts,"gpu_cohorts",lastGpuCohorts,
                 "cpu_seconds",lastCpuSeconds,"gpu_seconds",lastGpuSeconds,
                 "timing_cpu_cohorts",timingCpuCohorts,"timing_gpu_cohorts",timingGpuCohorts,
-                "last_gpu_stages",lastGpuStages);
+                "last_gpu_stages",lastGpuStages,"profile",currentProfile,
+                "cpu_baseline_seconds",selectors[currentProfile].baseline,"hybrid_wall_seconds",selectors[currentProfile].measured,
+                "cpu_anchor_samples",selectors[currentProfile].cpuCount,"hybrid_samples",selectors[currentProfile].hybridCount,
+                "selected_gpu_cohorts",selectors[currentProfile].bestSplit,"reevaluate_after_units",selectors[currentProfile].cooldown);
     }
     private static final class GpuAttempt {
         final Thread thread;
@@ -123,32 +155,31 @@ final class PortableJobEngine {
         // Leave at least one CPU cohort; remove one whole CPU scheduling wave.
         return 16-Math.max(1,(cpuWaves(16)-1)*capacity);
     }
-    private int balancedGpuCohorts(int profile){
-        int best=1;double time=Double.POSITIVE_INFINITY;
-        for(int gpu=1;gpu<16;gpu++){
-            double predicted=Math.max(cpuPerWave[profile]*cpuWaves(16-gpu),gpuPerCohort[profile]*gpu);
-            if(predicted<time){best=gpu;time=predicted;}
-        }
-        return best;
-    }
     private List<PortableSearchJob.Hit> compute(Plan job,BooleanSupplier cancel){
-        int profile=job.minPairs==0?0:job.minPairs==4?1:2;
+        int profile=job.minPairs==0?0:job.minPairs==4?1:2;currentProfile=profile;
+        Selector selector=selectors[profile];
         lastCpuCohorts=16;lastGpuCohorts=0;
         if(gpuRetryAfterNanos>System.nanoTime()){
             gpuState="deferred";gpuReason="resident_session_cleanup";return cpu(job,0,16,cancel);
         }
         if(gpuFactory==null||!gpuEligible.getAsBoolean()||qualification[profile]<0){
-            gpuState=gpuFactory==null?"disabled":qualification[profile]==-1?"failed":qualification[profile]==-2?"slower":"cpu_settings";
+            gpuState=gpuFactory==null?"disabled":qualification[profile]==-1?"failed":"cpu_settings";
             if(qualification[profile]>=0)gpuReason=gpuFactory==null?"not_configured":"settings_memory_or_other_gpu_work";
             return cpu(job,0,16,cancel);
         }
         boolean qualifying=qualification[profile]==0;
-        boolean warmTrial=qualification[profile]==2;
-        int gpuCohorts=qualifying?16:warmTrial?warmGpuCohorts():balancedGpuCohorts(profile);
+        if(!qualifying&&selector.chosen()==0){
+            gpuState="cpu_anchor";gpuReason=selector.cooldown>0?"measured_cpu_winner":"fresh_production_cpu_anchor";
+            long started=System.nanoTime();List<PortableSearchJob.Hit> result=cpu(job,0,16,cancel);
+            double seconds=(System.nanoTime()-started)/1e9;
+            if(selector.cooldown>0)selector.steady();else selector.cpu(seconds);
+            return result;
+        }
+        int gpuCohorts=qualifying?16:selector.chosen();
         int cpuCohorts=qualifying?16:16-gpuCohorts;
         GpuAttempt gpu=startGpu(job,qualifying?0:cpuCohorts,gpuCohorts,cancel);
         if(gpu==null){gpuState="gpu_busy";gpuReason="resident_slot_busy";return cpu(job,0,16,cancel);}
-        gpuState=qualifying?"qualifying":warmTrial?"warm_trial":"hybrid";gpuReason=qualifying?"independent_full_unit_comparison":warmTrial?"single_warm_trial_after_cold_start":"measured_cohort_split";lastCpuCohorts=cpuCohorts;lastGpuCohorts=gpuCohorts;
+        gpuState=qualifying?"qualifying":"hybrid";gpuReason=qualifying?"independent_full_unit_comparison":"measured_cohort_split";lastCpuCohorts=cpuCohorts;lastGpuCohorts=gpuCohorts;
         boolean completed=false;long wallStarted=System.nanoTime();
         try{
             long cpuStarted=System.nanoTime();
@@ -173,21 +204,16 @@ final class PortableJobEngine {
             }else if(qualifying){
                 if(!exact(hits,gpu.hits)){Arrays.fill(qualification,-1);gpuState="parity_failed";gpuReason="exact_keys_costs_attempts_differ";}
                 else{
-                    cpuPerWave[profile]=lastCpuSeconds/cpuWaves(16);gpuPerCohort[profile]=gpu.seconds/16;
-                    qualification[profile]=gpu.seconds>lastCpuSeconds?2:1;
-                    gpuState=qualification[profile]==2?"warm_trial_pending":"qualified";
-                    gpuReason=qualification[profile]==2?"exact_cold_start_needs_one_warm_trial":"exact_and_faster_on_first_unit";
+                    qualification[profile]=1;
+                    gpuState="qualified";gpuReason="exact_requires_production_anchors";
                 }
                 // First actual unit always returns the independent CPU result.
             }else{
                 hits.addAll(gpu.hits);
                 double wall=(System.nanoTime()-wallStarted)/1e9;
-                double baseline=cpuPerWave[profile]*cpuWaves(16);
-                if(wall>baseline*(warmTrial?1.0:1.05)){
-                    qualification[profile]=-2;gpuState="slower";gpuReason=warmTrial?"warm_trial_no_wall_gain":"measured_gpu_not_faster";
-                }else if(warmTrial){qualification[profile]=1;gpuState="qualified";gpuReason="warm_trial_wall_gain";}
-                cpuPerWave[profile]=.75*cpuPerWave[profile]+.25*lastCpuSeconds/cpuWaves(cpuCohorts);
-                gpuPerCohort[profile]=warmTrial?gpu.seconds/gpuCohorts:.75*gpuPerCohort[profile]+.25*gpu.seconds/gpuCohorts;
+                if(selector.cooldown>0)selector.steady();
+                else selector.hybrid(wall,lastCpuSeconds,gpu.seconds);
+                gpuState="qualified";gpuReason=selector.cooldown>0?"measured_wall_winner":"paired_production_sampling";
             }
             hits.sort((a,b)->{int order=Integer.compare(a.cost,b.cost);return order!=0?order:Long.compare(a.attempt,b.attempt);});
             completed=true;return new ArrayList<>(hits.subList(0,job.topk));
