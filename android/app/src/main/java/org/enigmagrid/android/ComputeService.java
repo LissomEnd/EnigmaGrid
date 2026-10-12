@@ -183,6 +183,9 @@ public final class ComputeService extends Service {
                     if(account==null)throw new IllegalStateException("Register this device from Account before starting work.");
                     CoordinatorClient client=new CoordinatorClient((String)account.get("server"));
                     network=new NetworkWorker(client,store,rows);
+                    // Qualify the actual arithmetic and assets, not a handset model.
+                    try{network.enablePortableJobEngine(new PortableJobEngine(getApplicationContext()));}
+                    catch(Exception unavailable){android.util.Log.w("EnigmaGridWorker","Portable C3 qualification unavailable ("+unavailable.getClass().getSimpleName()+"); bounded fallback retained");}
                     final NetworkWorker activeNetwork=network;
                     network.setTelemetryFactory((token,worker,serverTimeMs,receivedNs)->
                         new DeviceTelemetryReporter(getApplicationContext(),client.fork(),token,worker,serverTimeMs,receivedNs));

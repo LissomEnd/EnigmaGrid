@@ -26,6 +26,28 @@ final class NetworkWorker {
         try{session=telemetryFactory.create(token,this,serverTimeMs,receivedNs);session.start();telemetryReporter=session;}
         catch(RuntimeException unavailable){if(session!=null)session.close();}
     }
+    private volatile PortableJobEngine portableJobEngine;
+    private volatile boolean portableComputing;
+    boolean portableAvailable(){return portableJobEngine!=null;}
+    void enablePortableJobEngine(PortableJobEngine engine){
+        portableJobEngine=java.util.Objects.requireNonNull(engine);
+    }
+    private void validateAssignedLease(Map<String,Object> lease){
+        if("portable_event_v1".equals(lease.get("engine"))){
+            if(portableJobEngine==null)throw new IllegalArgumentException("Portable C3 engine not qualified on this Android device");
+            PortableJobEngine.validate(lease);
+        }else WorkEnvelope.validate(lease);
+    }
+    private Map<String,Object> computeAssignedLease(Map<String,Object> lease,BooleanSupplier cancel,
+                                  org.enigmagrid.core.BoundedCrib.RowProvider provider,int workers){
+        if("portable_event_v1".equals(lease.get("engine"))){
+            if(portableJobEngine==null)throw new IllegalStateException("Portable engine not available");
+            portableComputing=true;
+            try{return portableJobEngine.run(lease,cancel);}
+            finally{portableComputing=false;}
+        }
+        return WorkEnvelope.run(lease,cancel,provider,workers);
+    }
     private volatile int parallelJobs=1;
     private volatile CpuOnlyProductionProfile cpuProfile;
     private volatile java.util.function.Supplier<String> cpuProfileGuard;
@@ -141,6 +163,7 @@ final class NetworkWorker {
         return current instanceof org.enigmagrid.core.AdaptiveRows&&((org.enigmagrid.core.AdaptiveRows)current).available();
     }
     String backendName(){
+        if(portableComputing)return "portable-event-cpu";
         org.enigmagrid.core.BoundedCrib.RowProvider current=rows;
         if(!gpuAvailable())return "cpu";
         if(independentGpuLane)return "vulkan-mixed"+parallelJobs;
@@ -152,6 +175,8 @@ final class NetworkWorker {
     NetworkWorker(CoordinatorClient client,CredentialStore store,org.enigmagrid.core.BoundedCrib.RowProvider rows,boolean batchEnabled){this.batchEnabled=batchEnabled;this.rows=rows;this.client=client;this.completions=new CompletionTransport(client);this.heartbeat=client.fork();this.allocator=client.fork();this.store=store;this.pending=store.pendingResults();}
     private Map<String,Object> metadata(){
         Map<String,Object> meta=Enrollment.metadata();
+        if(portableJobEngine!=null)
+            meta.put("supported_engines",Arrays.asList("bounded_crib_v1","portable_event_v1"));
         if(gpuAvailable()){
             meta.put("capabilities",Arrays.asList("cpu","bounded_crib_v1","gpu"));
             meta.put("gpus",Arrays.asList(object("vendor","Vulkan","name","Qualified Vulkan compute","memory_mb",0)));
@@ -222,7 +247,7 @@ final class NetworkWorker {
         Set<String> ids=new HashSet<>();
         for(Object item:leases){
             if(!(item instanceof Map))throw new IllegalArgumentException("Invalid lease");
-            Map<String,Object> lease=(Map<String,Object>)item;WorkEnvelope.validate(lease);
+            Map<String,Object> lease=(Map<String,Object>)item;validateAssignedLease(lease);
             if(!(lease.get("id") instanceof String)||!(lease.get("work_token") instanceof String)||!ids.add((String)lease.get("id")))throw new IllegalArgumentException("Invalid lease credentials or duplicate lease");
         }
         ScheduledExecutorService renew=Executors.newSingleThreadScheduledExecutor();
@@ -318,7 +343,7 @@ final class NetworkWorker {
                         List<Map<String,Object>> result=new ArrayList<>();Set<String> unique=new HashSet<>();
                         for(Object item:(List<?>)value){
                             if(!(item instanceof Map))throw new IllegalArgumentException("Invalid prefetch lease");
-                            Map<String,Object> lease=(Map<String,Object>)item;WorkEnvelope.validate(lease);
+                            Map<String,Object> lease=(Map<String,Object>)item;validateAssignedLease(lease);
                             if(!(lease.get("id") instanceof String)||!(lease.get("work_token") instanceof String)||!unique.add((String)lease.get("id")))throw new IllegalArgumentException("Invalid prefetch credentials");
                             result.add(lease);
                         }
@@ -354,11 +379,14 @@ final class NetworkWorker {
                     try {
                         check(()->closing.get()||control.getAsBoolean());
                         long started=System.nanoTime();
-                        Map<String,Object> result=WorkEnvelope.run(lease,()->closing.get()||revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));
+                        Map<String,Object> result=computeAssignedLease(lease,()->closing.get()||revoked||control.getAsBoolean(),rows,Math.max(1,Math.min(32,Runtime.getRuntime().availableProcessors())));
                         double seconds=Math.max(.000001,(System.nanoTime()-started)/1e9);
                         long units=unitCount(lease);
-                        Map<String,Object> receipt=(Map<String,Object>)result.get("receipt");
-                        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Double.toString(seconds),"candidate_count",((List<?>)receipt.get("candidates")).size(),"result",result,"meta",metadata());
+                        Object receipt=result.get("receipt");
+                        Object candidates=receipt instanceof Map?
+                            ((Map<?,?>)receipt).get("candidates"):result.get("portable_key_rows");
+                        if(!(candidates instanceof List))throw new IllegalStateException("No qualified candidate list");
+                        Map<String,Object> submission=object("lease_id",lease.get("id"),"work_token",lease.get("work_token"),"compute_seconds",Double.toString(seconds),"candidate_count",((List<?>)candidates).size(),"result",result,"meta",metadata());
                         // Persist even if stop arrives after computation completed.
                         queue.append(submission);pendingResults=queue.unacknowledgedCount();
                         synchronized(this){

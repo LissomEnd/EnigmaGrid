@@ -4,12 +4,23 @@ EnigmaGrid is an experimental Windows and Android volunteer-computing project.
 One official Android app is sufficient for contribution; the separate Lab package
 is only an isolated development tool. Download published packages from
 [GitHub Releases](https://github.com/LissomEnd/EnigmaGrid/releases).
-This client currently computes `bounded_crib_v1` jobs; the Windows
-`portable_event_v1` search is not included in its Android engine list.
+This client computes `bounded_crib_v1` jobs and the canonical C3
+`portable_event_v1` segments. Portable support is enabled after asset integrity
+and independent arithmetic checks, rather than a handset model allowlist.
+Its independent deterministic cohorts share a bounded CPU executor. Portable
+search currently uses CPU; the bounded engine has a separately qualified GPU path.
 
-The current source targets the coordinated **0.5.0 candidate**. A source version
+The current Android source targets **0.5.2**. A source version
 is not evidence that a package is published, installed or qualified on a device.
 Release notes identify the tested package hashes and hardware.
+
+The coordinator must support Android portable seed hints and compact receipts
+before enabling portable assignments. Existing independent replica checks remain
+mandatory. A device cannot independently validate its own contributor's work.
+No extra app, account reset or new campaign is needed to install an update.
+
+The Android package includes the original German quadgram source data and its
+GPL-3.0 license under `assets/licenses`, alongside the derived scoring table.
 
 ## Contributing
 
