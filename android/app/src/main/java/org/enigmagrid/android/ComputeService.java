@@ -27,6 +27,7 @@ public final class ComputeService extends Service {
             "full_solver_mode",gpuSettings.getString("auto_solver_mode","not-qualified"),
             "qualified_backend_available",network!=null&&network.gpuAvailable(),
             "promoted_rows_failed",promotedRows!=null&&promotedRows.failed())));
+        if(network!=null)writer.println("portable_diagnostics="+org.enigmagrid.core.WorkBlockJson.json(network.portableDiagnostics()));
         android.content.SharedPreferences status=getSharedPreferences("worker-status",0);
         writer.println("worker_diagnostics="+org.enigmagrid.core.WorkBlockJson.json(org.enigmagrid.core.Canonical.object(
             "state",status.getString("state",""),"completed_jobs",status.getLong("completed_jobs",0),
@@ -56,7 +57,7 @@ public final class ComputeService extends Service {
 
     private volatile String outcome;
     private NetworkWorker measuredWorker;
-    private long measuredAt,measuredUnits,measuredJobs;
+    private final org.enigmagrid.core.CompletedWorkRate workRate=new org.enigmagrid.core.CompletedWorkRate(30);
     private final java.util.concurrent.ConcurrentHashMap<String,Long> gateSamples=new java.util.concurrent.ConcurrentHashMap<>();
 
     private final Runnable report=new Runnable(){public void run(){
@@ -79,14 +80,10 @@ public final class ComputeService extends Service {
         String state=unrestricted?(outcome!=null?outcome:(current!=null?currentPhase:gate)):gate;
         boolean computing=currentPhase.startsWith("Computing assigned work");
         long sampleAt=System.nanoTime();
-        if(current!=measuredWorker){measuredWorker=current;measuredAt=sampleAt;measuredUnits=0;measuredJobs=0;}
+        if(current!=measuredWorker){measuredWorker=current;workRate.reset();}
         long units=current==null?0:current.completedUnits(),jobs=current==null?0:current.completedJobs();
-        double interval=(sampleAt-measuredAt)/1e9;
-        // Count completed work over wall time, including network idle. A short
-        // job need not happen to be running at this one-second sample instant.
-        float unitsPerSecond=interval>0?(float)((units-measuredUnits)/interval):0f;
-        float jobsPerSecond=interval>0?(float)((jobs-measuredJobs)/interval):0f;
-        measuredAt=sampleAt;measuredUnits=units;measuredJobs=jobs;
+        double[] rates=workRate.sample(sampleAt,units,jobs);
+        float unitsPerSecond=(float)rates[0],jobsPerSecond=(float)rates[1];
 
         getSharedPreferences("worker-status",0).edit().putLong("updated_at_elapsed_ms",SystemClock.elapsedRealtime()).putString("state",state)
             .putString("backend",current==null?"idle":current.backendName())
@@ -184,7 +181,14 @@ public final class ComputeService extends Service {
                     CoordinatorClient client=new CoordinatorClient((String)account.get("server"));
                     network=new NetworkWorker(client,store,rows);
                     // Qualify the actual arithmetic and assets, not a handset model.
-                    try{network.enablePortableJobEngine(new PortableJobEngine(getApplicationContext()));}
+                    try{
+                        PortableJobEngine portable=new PortableJobEngine(getApplicationContext());
+                        portable.configureGpu(this::portableBackend,()->
+                            settings.getInt("cpu_percent",25)==100&&settings.getInt("gpu_percent",0)==100
+                            &&(automaticGpuCheck==null||!automaticGpuCheck.isAlive())&&portableMemoryAvailable(),
+                            ()->stopping||destroyed);
+                        network.enablePortableJobEngine(portable);
+                    }
                     catch(Exception unavailable){android.util.Log.w("EnigmaGridWorker","Portable C3 qualification unavailable ("+unavailable.getClass().getSimpleName()+"); bounded fallback retained");}
                     final NetworkWorker activeNetwork=network;
                     network.setTelemetryFactory((token,worker,serverTimeMs,receivedNs)->
@@ -293,6 +297,24 @@ public final class ComputeService extends Service {
 
     }
 
+    private boolean portableMemoryAvailable(){
+        android.app.ActivityManager.MemoryInfo memory=new android.app.ActivityManager.MemoryInfo();
+        ((android.app.ActivityManager)getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(memory);
+        return !memory.lowMemory&&memory.availMem>=512L*1024*1024;
+    }
+    private org.enigmagrid.core.PortableGpuSearch.Backend portableBackend(){
+        GpuProcess session=new GpuProcess(getApplicationContext());
+        return new org.enigmagrid.core.PortableGpuSearch.Backend(){
+            public int begin(int[] reference,int[] state,int[] params){
+                try{return session.portableBegin(reference,state,params);}
+                catch(RuntimeException|Error failure){session.close();throw failure;}
+            }
+            public void step(int id,int[] tape,int iterations){session.portableStep(id,tape,iterations);}
+            public int[] finish(int id){return session.portableFinish(id);}
+            public void close(int id){try{session.portableClose(id);}finally{session.close();}}
+        };
+    }
+
     /** Two bounded, asynchronous stages: GPU receipt parity, then measured CPU/GPU
      * solver parity. CPU grid work and durable upload continue throughout. */
     private boolean qualificationMemoryAvailable(boolean solver){return qualificationMemoryAvailable(solver,0);}
@@ -316,6 +338,7 @@ public final class ComputeService extends Service {
     }
     private synchronized void startAutomaticGpuCheck(NetworkWorker current,SharedPreferences settings,WorkControl control,
                                         GpuProcess existingGpu,org.enigmagrid.core.AdaptiveRows existingRows){
+        if(!"bounded_crib_v1".equals(current.activeEngine()))return;
         Thread currentCheck=automaticGpuCheck;if(currentCheck!=null&&currentCheck.isAlive())return;
         if(stopping||destroyed||control.getAsBoolean())return;
         String key=GpuProcess.qualificationKey();

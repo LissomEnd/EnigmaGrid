@@ -10,9 +10,17 @@ public final class PortableEventScore {
     public static final int QUADGRAM_ITEMS = 26 * 26 * 26 * 26;
     public static final int KEY_LENGTH = 42;
     private static final int[] WIRES = new int[625];
+    private static final int[][] SHELLS=new int[1344][];
+    private static final int[] FORWARD=new int[10*26*26],REVERSE=new int[10*26*26];
     private static final boolean[][] NOTCH = new boolean[8][26];
     static {
         EnigmaM4.copyRowTables(WIRES);
+        for(int rotor=0;rotor<10;rotor++)for(int shift=0;shift<26;shift++)for(int x=0;x<26;x++){
+            int offset=(rotor*26+shift)*26+x;
+            FORWARD[offset]=mod(WIRES[1+rotor*26+mod(x+shift)]-shift);
+            REVERSE[offset]=mod(WIRES[313+rotor*26+mod(x+shift)]-shift);
+        }
+        for(int i=0;i<SHELLS.length;i++)SHELLS[i]=shell(i);
         String[] notch = {"Q","E","V","J","Z","ZM","ZM","ZM"};
         for(int rotor=0;rotor<8;rotor++)
             for(int i=0;i<notch[rotor].length();i++)
@@ -24,12 +32,12 @@ public final class PortableEventScore {
         return a<0?a+26:a;
     }
     private static int forward(int rotor,int x,int position,int ring){
-        final int shift=position-ring;
-        return mod(WIRES[1+rotor*26+mod(x+shift)]-shift);
+        int shift=position-ring;if(shift<0)shift+=26;
+        return FORWARD[(rotor*26+shift)*26+x];
     }
     private static int reverse(int rotor,int x,int position,int ring){
-        final int shift=position-ring;
-        return mod(WIRES[313+rotor*26+mod(x+shift)]-shift);
+        int shift=position-ring;if(shift<0)shift+=26;
+        return REVERSE[(rotor*26+shift)*26+x];
     }
     private static void step(int[] position,int middle,int right){
         boolean middleNotch=NOTCH[middle][position[2]];
@@ -72,10 +80,11 @@ public final class PortableEventScore {
         if(cipher==null||cipher.length!=72||key==null||key.length!=KEY_LENGTH
                 ||quadgrams==null||quadgrams.length!=QUADGRAM_ITEMS)
             throw new IllegalArgumentException("Invalid score inputs");
-        final int[] shell=shell(key[0]);
+        if(key[0]<0||key[0]>=SHELLS.length)throw new IllegalArgumentException("Invalid shell index");
+        final int[] shell=SHELLS[key[0]];
         final int reflector=shell[0],greek=shell[1],left=shell[2],middle=shell[3],right=shell[4];
         int[] position=Arrays.copyOfRange(key,5,9);
-        int[] out=new int[72];
+        int rolling=0;long full=0,leftCost=0,rightCost=0;
         final int kind=key[39],at=key[40],param=key[41];
         if(kind<1||kind>6||at<0||at>71||param<1||param>4)
             throw new IllegalArgumentException("Invalid dynamic event");
@@ -103,15 +112,12 @@ public final class PortableEventScore {
             x=reverse(left,x,position[1],key[2]);
             x=reverse(middle,x,position[2],key[3]);
             x=reverse(right,x,position[3],key[4]);
-            out[i]=key[9+x];
-        }
-        long full=0,leftCost=0,rightCost=0;
-        for(int i=0;i<69;i++){
-            int z=((out[i]*26+out[i+1])*26+out[i+2])*26+out[i+3];
-            int cost=quadgrams[z];
-            full+=cost;
-            if(i+3<at)leftCost+=cost;
-            if(i>=at)rightCost+=cost;
+            rolling=(rolling%17576)*26+key[9+x];
+            if(i>=3){
+                int cost=quadgrams[rolling];full+=cost;
+                if(i<at)leftCost+=cost;
+                if(i-3>=at)rightCost+=cost;
+            }
         }
         long ll=at>3?Math.floorDiv(leftCost,at-3):20000;
         long rr=at<69?Math.floorDiv(rightCost,69-at):20000;

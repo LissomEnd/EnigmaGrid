@@ -10,4 +10,16 @@ final class VulkanBackend {
     private static native int[] rowsNative(int[] packed,byte[] spirv);
     static int[] solve(int[] packed,byte[] spirv){if(!loaded)throw new IllegalStateException("Native Vulkan unavailable");return solveNative(packed,spirv);}
     private static native int[] solveNative(int[] packed,byte[] spirv);
+    // Experimental resident API. Service must kill its process if poisoned;
+    // Binder death must invalidate every caller-side session handle.
+    static int portableBegin(int[] reference,int[] state,int[] params,byte[] shader){if(!loaded)throw new IllegalStateException("Native Vulkan unavailable");return portableBeginNative(reference,state,params,shader);}
+    static void portableStep(int session,int[] tape,int iterations){portableStepNative(session,tape,iterations);}
+    static int[] portableFinish(int session){return portableFinishNative(session);}
+    static void portableClose(int session){portableCloseNative(session);}
+    static boolean portablePoisoned(){return loaded&&portablePoisonedNative();}
+    private static native int portableBeginNative(int[] reference,int[] state,int[] params,byte[] shader);
+    private static native void portableStepNative(int session,int[] tape,int iterations);
+    private static native int[] portableFinishNative(int session);
+    private static native void portableCloseNative(int session);
+    private static native boolean portablePoisonedNative();
 }

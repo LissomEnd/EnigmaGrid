@@ -50,9 +50,9 @@ final class GpuProcess implements AutoCloseable {
     private boolean bound;
     private final ServiceConnection connection=new ServiceConnection(){
         public void onServiceConnected(ComponentName name,IBinder binder){if(!closed)ready.complete(new Messenger(binder));}
-        public void onServiceDisconnected(ComponentName name){fail("GPU process disconnected");}
-        public void onBindingDied(ComponentName name){fail("GPU binding died");}
-        public void onNullBinding(ComponentName name){fail("GPU binding unavailable");}
+        public void onServiceDisconnected(ComponentName name){close();}
+        public void onBindingDied(ComponentName name){close();}
+        public void onNullBinding(ComponentName name){close();}
     };
     GpuProcess(Context context){
         this.context=context.getApplicationContext();callbacks.start();
@@ -71,6 +71,28 @@ final class GpuProcess implements AutoCloseable {
     int[] rows(int[] input){return dispatch(1,input);}
     int[] solve(int[] input){return dispatch(2,input);}
     int[] solveKeys(int[] input){return dispatch(3,input);}
+    private int activePortableSession;
+    synchronized int portableBegin(int[] reference,int[] state,int[] params){
+        int[] result=dispatch(4,org.enigmagrid.core.PortableGpuPacket.begin(reference,state,params));
+        if(result.length!=1||result[0]<=0)throw new IllegalStateException("Invalid portable GPU session");
+        activePortableSession=result[0];
+        return result[0];
+    }
+    synchronized void portableStep(int session,int[] tape,int iterations){
+        int[] result=dispatch(5,org.enigmagrid.core.PortableGpuPacket.step(session,tape,iterations));
+        if(result.length!=1||result[0]!=session)throw new IllegalStateException("Invalid portable GPU step reply");
+    }
+    synchronized int[] portableFinish(int session){
+        int[] result=dispatch(6,org.enigmagrid.core.PortableGpuPacket.session(session));
+        activePortableSession=0; // Native finish consumes the session.
+        return result;
+    }
+    synchronized void portableClose(int session){
+        if(activePortableSession==0)return;
+        if(session!=activePortableSession)throw new IllegalStateException("Stale portable GPU session");
+        try{if(!closed)dispatch(7,org.enigmagrid.core.PortableGpuPacket.session(session));}
+        finally{activePortableSession=0;}
+    }
     private int[] dispatch(int kind,int[] input){
         if(Looper.myLooper()==Looper.getMainLooper())throw new IllegalStateException("GPU call on UI thread");
         if(closed)throw new IllegalStateException("GPU session closed");

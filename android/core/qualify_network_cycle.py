@@ -3,6 +3,7 @@ import argparse,pathlib,subprocess,tempfile
 p=argparse.ArgumentParser();p.add_argument('--jdk',required=True);a=p.parse_args();jdk=pathlib.Path(a.jdk)/'bin'
 root=pathlib.Path(__file__).resolve().parents[1]
 sources={
+'org/enigmagrid/android/PortableJobEngine.java':'''package org.enigmagrid.android;import java.util.*;import java.util.function.*;class PortableJobEngine{Map<String,Object> diagnostics(){return Collections.emptyMap();}static void validate(Map<String,Object> lease){}Map<String,Object> run(Map<String,Object> lease,BooleanSupplier stop){throw new AssertionError("Scientific portable solver is qualified separately");}}''',
 'org/enigmagrid/android/CoordinatorClient.java':'''package org.enigmagrid.android;import java.util.*;import java.io.*;import static org.enigmagrid.core.Canonical.object;
 class CoordinatorClient{static class HttpFailure extends IOException{int status;HttpFailure(int s){status=s;}}List<String> calls=Collections.synchronizedList(new ArrayList<>());java.util.concurrent.CountDownLatch uploadEntered,uploadExited;boolean slowComplete;boolean prefetch;java.util.concurrent.CountDownLatch prefetchStarted=new java.util.concurrent.CountDownLatch(1);java.util.concurrent.CountDownLatch computeEntered=new java.util.concurrent.CountDownLatch(1);java.util.concurrent.CountDownLatch overlap;java.util.concurrent.CountDownLatch overlapStarted=new java.util.concurrent.CountDownLatch(1);boolean failSettings,failComplete,disabled,required;boolean idle;boolean batches;boolean duplicateBatch;int failAtComplete;String origin(){return "https://test";}CoordinatorClient fork(){return this;}void cancel(){}Map<String,Object> request(String path,Map<String,Object> b,String t)throws Exception{org.enigmagrid.core.Canonical.json(b);calls.add(path);if(path.endsWith("complete")&&uploadEntered!=null){uploadEntered.countDown();try{Thread.sleep(10000);}finally{uploadExited.countDown();}}if(path.endsWith("complete")&&overlap!=null)overlapStarted.countDown();if(path.endsWith("complete")&&overlap!=null&&!overlap.await(2,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("No compute/upload overlap");if(path.endsWith("complete")&&slowComplete){slowComplete=false;Thread.sleep(21500);}if(path.endsWith("settings")&&failSettings)throw new IOException();if(path.endsWith("complete")&&(failComplete||count("complete")==failAtComplete))throw new IOException();if(path.endsWith("leases")){if(prefetch&&count("leases")>1){prefetchStarted.countDown();if(!computeEntered.await(2,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("No allocation/compute overlap");return object("enabled",true,"leases",count("leases")==2?Arrays.asList(object("id","a","work_token","s"),object("id","b","work_token","s"),object("id","c","work_token","s")):Arrays.asList(object("id","c","work_token","s")));}if(!batches)throw new HttpFailure(404);return object("enabled",true,"leases",Arrays.asList(object("id","a","work_token","s"),object("id",duplicateBatch?"a":"b","work_token","s")));}if(path.endsWith("lease"))return object("enabled",!disabled,"update_required",required,"lease",idle?null:object("id","lease","work_token","secret"));return object("ok",true);}int count(String suffix){synchronized(calls){return (int)calls.stream().filter(s->s.endsWith(suffix)).count();}}}
 ''',
@@ -109,7 +110,30 @@ for(int target:new int[]{2,4})try{
 }catch(java.util.concurrent.CancellationException expected){}
 check(reporterCreated.get()==1&&reporterStarted.get()==1&&reporterClosed.get()==0&&legacyTelemetry.count("complete")>=4);
 legacyTelemetryWorker.stopPresence();check(reporterClosed.get()==1);
-System.out.println("PASS: negotiated long blocks, grouped acknowledgements and stop recovery; repeated work, idle reset, settings retry, durable replay, disable, mandatory update, batch partial failure and restart, compute/upload overlap, blocked-upload cancellation and retained receipts, duplicate batch rejection, legacy fallback");}}
+// Count successful per-lease transport callbacks even if a later upload fails.
+CoordinatorClient ackPartial=new CoordinatorClient();ackPartial.batches=true;ackPartial.failAtComplete=2;
+CredentialStore ackStore=new CredentialStore();ackStore.save(object("server",ackPartial.origin(),"device_token","ack-token"));
+NetworkWorker ackWorker=new NetworkWorker(ackPartial,ackStore);
+try{ackWorker.once(()->false);throw new AssertionError("Expected partial upload failure");}catch(IOException expected){}
+check(ackWorker.acknowledgedReceipts()==1);
+ackWorker.once(()->false);check(ackWorker.acknowledgedReceipts()==2);
+// A successful HTTP acknowledgement followed by a failed durable deletion may
+// replay on the next attempt. Count it once in this session, never on HTTP failure.
+CoordinatorClient replayAck=new CoordinatorClient();replayAck.failComplete=true;
+CredentialStore replayAckStore=new CredentialStore();replayAckStore.save(object("server",replayAck.origin(),"device_token","ack-replay"));
+java.util.concurrent.atomic.AtomicBoolean failRemoval=new java.util.concurrent.atomic.AtomicBoolean(false);
+replayAckStore.pending=new CredentialStore(){@Override void save(Map<String,Object> value){if(failRemoval.get())throw new IllegalStateException("simulated durable failure");super.save(value);}};
+replayAckStore.pending.save(object("server",replayAck.origin(),"owner",org.enigmagrid.core.Canonical.digest("ack-replay"),"submissions",new ArrayList<>(Arrays.asList(object("lease_id","saved-ack","work_token","s")))));
+NetworkWorker replayAckWorker=new NetworkWorker(replayAck,replayAckStore);
+try{replayAckWorker.once(()->false);throw new AssertionError();}catch(IOException expected){}
+check(replayAckWorker.acknowledgedReceipts()==0);
+replayAck.failComplete=false;failRemoval.set(true);
+try{replayAckWorker.once(()->false);throw new AssertionError();}catch(IllegalStateException expected){check(expected.getMessage().contains("simulated durable failure"));}
+check(replayAckWorker.acknowledgedReceipts()==1);
+failRemoval.set(false);replayAckWorker.once(()->false);check(replayAckWorker.acknowledgedReceipts()==1);
+check(((List<?>)replayAckStore.pending.load().get("submissions")).isEmpty());
+check(blockWorker.acknowledgedReceipts()==blockReceived.size());
+System.out.println("PASS: legacy and block acknowledgement counters, partial failure, durable acknowledgement replay; negotiated long blocks, grouped acknowledgements and stop recovery; repeated work, idle reset, settings retry, durable replay, disable, mandatory update, batch partial failure and restart, compute/upload overlap, blocked-upload cancellation and retained receipts, duplicate batch rejection, legacy fallback");}}
 '''
 }
 with tempfile.TemporaryDirectory(prefix='enigma-network-cycle-') as folder:

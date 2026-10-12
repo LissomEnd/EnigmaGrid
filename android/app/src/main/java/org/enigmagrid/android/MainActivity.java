@@ -437,9 +437,9 @@ public final class MainActivity extends Activity {
 
         TelemetryChartView temperatureChart=new TelemetryChartView(this,true);monitoring.addView(temperatureChart,new LinearLayout.LayoutParams(-1,dp(210)));
 
-        label(monitoring,"Units / second",15);
+        label(monitoring,"Units / second - 30-second average",15);
         TelemetryChartView unitsChart=new TelemetryChartView(this,TelemetryChartView.RATE,"Units","");monitoring.addView(unitsChart,new LinearLayout.LayoutParams(-1,dp(170)));
-        label(monitoring,"Jobs / second",15);
+        label(monitoring,"Jobs / second - 30-second average",15);
         TelemetryChartView jobsChart=new TelemetryChartView(this,TelemetryChartView.RATE,"Jobs","");monitoring.addView(jobsChart,new LinearLayout.LayoutParams(-1,dp(170)));
         TextView queueMetrics=label(monitoring,"Ready — · Running — · To send —",14);
         TextView stageMetrics=label(monitoring,"Compute — · Save — · Network —",14);

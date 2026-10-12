@@ -28,7 +28,10 @@ final class NetworkWorker {
     }
     private volatile PortableJobEngine portableJobEngine;
     private volatile boolean portableComputing;
+    private volatile String assignedEngine="";
+    String activeEngine(){return assignedEngine;}
     boolean portableAvailable(){return portableJobEngine!=null;}
+    Map<String,Object> portableDiagnostics(){PortableJobEngine engine=portableJobEngine;return engine==null?Collections.emptyMap():engine.diagnostics();}
     void enablePortableJobEngine(PortableJobEngine engine){
         portableJobEngine=java.util.Objects.requireNonNull(engine);
     }
@@ -40,6 +43,7 @@ final class NetworkWorker {
     }
     private Map<String,Object> computeAssignedLease(Map<String,Object> lease,BooleanSupplier cancel,
                                   org.enigmagrid.core.BoundedCrib.RowProvider provider,int workers){
+        assignedEngine=String.valueOf(lease.get("engine"));
         if("portable_event_v1".equals(lease.get("engine"))){
             if(portableJobEngine==null)throw new IllegalStateException("Portable engine not available");
             portableComputing=true;
@@ -138,9 +142,26 @@ final class NetworkWorker {
     private volatile org.enigmagrid.core.WorkBlockQueue activeBlockQueue;
     private volatile org.enigmagrid.core.WorkBlockTransport activeBlockTransport;
     private volatile long completedBlockAcks;
+    private long completedLegacyAcks;
+    // Only IDs still in the bounded durable outbox need replay deduplication.
+    // Counters describe this worker session's observed HTTP acknowledgements,
+    // not independently verified work or lifetime credit.
+    private final Set<String> acknowledgedLegacyOutbox=new HashSet<>();
     synchronized long acknowledgedReceipts(){
         org.enigmagrid.core.WorkBlockTransport active=activeBlockTransport;
-        return completedBlockAcks+(active==null?0:active.acknowledgedReceipts());
+        return completedLegacyAcks+completedBlockAcks+(active==null?0:active.acknowledgedReceipts());
+    }
+    private void confirmLegacyReceipt(org.enigmagrid.core.ReceiptQueue queue,String id) throws Exception {
+        synchronized(queue){
+            Set<String> durableIds=new HashSet<>();
+            for(Map<String,Object> receipt:queue.pending())durableIds.add((String)receipt.get("lease_id"));
+            if(!durableIds.contains(id))throw new IllegalStateException("Acknowledged receipt missing from outbox");
+            queue.confirm(id);
+            synchronized(this){
+                acknowledgedLegacyOutbox.retainAll(durableIds);
+                if(acknowledgedLegacyOutbox.add(id))completedLegacyAcks++;
+            }
+        }
     }
     double persistenceSeconds(){org.enigmagrid.core.WorkBlockQueue q=activeBlockQueue;return completedPersistenceSeconds+(q==null?0:q.persistenceSeconds());}
     String phase(){String current=phase;return uploadActive&&"Computing assigned work".equals(current)?"Computing assigned work · uploading previous result":current;}
@@ -163,7 +184,7 @@ final class NetworkWorker {
         return current instanceof org.enigmagrid.core.AdaptiveRows&&((org.enigmagrid.core.AdaptiveRows)current).available();
     }
     String backendName(){
-        if(portableComputing)return "portable-event-cpu";
+        if(portableComputing){Map<String,Object> info=portableDiagnostics();return "portable-event-"+String.valueOf(info.get("state"));}
         org.enigmagrid.core.BoundedCrib.RowProvider current=rows;
         if(!gpuAvailable())return "cpu";
         if(independentGpuLane)return "vulkan-mixed"+parallelJobs;
@@ -207,7 +228,7 @@ final class NetworkWorker {
             if(state.remove("pending_submission")!=null)store.save(state);
             Map<String,Object> receipt=receipts.get(0);
             phase="Sending saved result; waiting for coordinator";
-            check(control);submit(receipt,token);queue.acknowledge((String)receipt.get("lease_id"));pendingResults=queue.unacknowledgedCount();acknowledgedWork=true;
+            check(control);submit(receipt,token);confirmLegacyReceipt(queue,(String)receipt.get("lease_id"));queue.acknowledge((String)receipt.get("lease_id"));pendingResults=queue.unacknowledgedCount();acknowledgedWork=true;
             return "Saved result acknowledged; independent verification may still be pending";
         }
         check(control);
@@ -285,7 +306,7 @@ final class NetworkWorker {
                 if(submission==null)continue;
                 List<Map<String,Object>> batch=new ArrayList<>();batch.add(submission);ready.drainTo(batch,7);
                 uploadActive=true;
-                try{completions.send(batch,token,id->{queue.confirm(id);pendingResults=queue.unacknowledgedCount();reservations.acknowledge(id);acknowledgedWork=true;});}
+                try{completions.send(batch,token,id->{confirmLegacyReceipt(queue,id);pendingResults=queue.unacknowledgedCount();reservations.acknowledge(id);acknowledgedWork=true;});}
                 finally{uploadActive=false;}
             }
             queue.flushConfirmed();
@@ -354,7 +375,10 @@ final class NetworkWorker {
                 });
             }
             if(uploading.isDone())awaitUpload(uploading,control);
-            if(running.size()>=parallelJobs||!queue.hasCapacity()){
+            // Portable already distributes one full unit across CPU/GPU cohorts.
+            // Do not count another unit waiting on its engine lock as compute time.
+            int leaseLanes="portable_event_v1".equals(assignedEngine)?1:parallelJobs;
+            if(running.size()>=leaseLanes||!queue.hasCapacity()){
                 phase=running.isEmpty()?"Result queue full; waiting for upload":"Computing assigned work";
                 Future<Double> next=completed.poll(10,TimeUnit.MILLISECONDS);
                 if(next!=null){running.remove(next);executingJobs=running.size();double seconds=refillResult(next);averageJobSeconds=averageJobSeconds*.8+seconds*.2;}
@@ -371,6 +395,7 @@ final class NetworkWorker {
                 }
                 break;
             }
+            assignedEngine=String.valueOf(lease.get("engine"));
             String reservedLease=(String)lease.get("id");
             if(!queue.reserve(reservedLease))throw new IllegalStateException("Result capacity unavailable before computation");
             phase="Computing assigned work";
@@ -482,7 +507,7 @@ final class NetworkWorker {
         ScheduledExecutorService renew=Executors.newSingleThreadScheduledExecutor();
         org.enigmagrid.core.WorkBlockPipeline.BatchCompute computation=new org.enigmagrid.core.WorkBlockPipeline.BatchCompute(){
             public Map<String,Object> run(Map<String,Object> envelope)throws Exception {
-                check(control);phase="Computing assigned work";synchronized(NetworkWorker.this){executingJobs++;}long began=System.nanoTime();
+                check(control);assignedEngine="bounded_crib_v1";phase="Computing assigned work";synchronized(NetworkWorker.this){executingJobs++;}long began=System.nanoTime();
                 try {
                     int laneWorkers=org.enigmagrid.core.CpuLaneBudget.forLane(
                         Runtime.getRuntime().availableProcessors(),parallelJobs,independentGpuLane,independentGpuLane&&gpuLane.get());
@@ -496,7 +521,7 @@ final class NetworkWorker {
                 if(cohortDispatch==null||!independentGpuLane||!gpuLane.get()){
                     for(int i=0;i<envelopes.size();i++){check(control);long began=System.nanoTime();Map<String,Object> result=run(envelopes.get(i));completed.accept(i,result,Math.max(.000001,(System.nanoTime()-began)/1e9));}return;
                 }
-                phase="Computing assigned work";synchronized(NetworkWorker.this){executingJobs++;}long began=System.nanoTime();
+                assignedEngine="bounded_crib_v1";phase="Computing assigned work";synchronized(NetworkWorker.this){executingJobs++;}long began=System.nanoTime();
                 try{
                     org.enigmagrid.core.GpuWorkCohort.run(envelopes,cohortDispatch,()->revoked||control.getAsBoolean(),
                         org.enigmagrid.core.CpuLaneBudget.forLane(Runtime.getRuntime().availableProcessors(),parallelJobs,true,true),(index,result,seconds)->{

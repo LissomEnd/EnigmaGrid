@@ -8,4 +8,8 @@
     <instrumentation android:name="org.enigmagrid.android.BatchQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="GPU batch qualification" />
     <instrumentation android:name="org.enigmagrid.android.UiGpuExclusionQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="GPU UI exclusion qualification" />
     <instrumentation android:name="org.enigmagrid.android.CpuCompatibilityQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="CPU platform compatibility qualification" />
+    <instrumentation android:name="org.enigmagrid.android.PortableScoreParityQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Portable C3 deterministic event scorer parity" />
+    <instrumentation android:name="org.enigmagrid.android.PortableRngParityQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Portable C3 NumPy PCG64 and mutation parity" />
+    <instrumentation android:name="org.enigmagrid.android.PortableSearchPrefixQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Portable C3 replay search prefix parity" />
+    <instrumentation android:name="org.enigmagrid.android.PortableFullUnitQualification" android:targetPackage="org.enigmagrid.android.lab" android:label="Portable C3 full historical unit independent replay" />
 </manifest>

@@ -10,28 +10,40 @@ import java.math.BigInteger;
  * before any public/paid result could be accepted. No work is enabled yet.
  */
 public final class PortablePcg64 {
-    private static final BigInteger MOD128=BigInteger.ONE.shiftLeft(128).subtract(BigInteger.ONE);
-    private static final BigInteger MOD64=BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
-    private static final BigInteger MUL=new BigInteger("2360ed051fc65da44385df649fccf645",16);
+    private static final long MUL_HIGH=0x2360ed051fc65da4L;
+    private static final long MUL_LOW=0x4385df649fccf645L;
     private static final long UINT32_MASK=0xffffffffL;
-    private BigInteger state;
-    private final BigInteger increment;
+    private long stateHigh,stateLow;
+    private final long incrementHigh,incrementLow;
     private boolean hasCached32;
     private long cached32;
 
     public PortablePcg64(String unsignedState,String unsignedIncrement) {
-        this.state=new BigInteger(unsignedState,10);
-        this.increment=new BigInteger(unsignedIncrement,10);
+        BigInteger state=new BigInteger(unsignedState,10);
+        BigInteger increment=new BigInteger(unsignedIncrement,10);
         if(state.signum()<0||state.bitLength()>128||increment.signum()<=0
                 ||increment.bitLength()>128||!increment.testBit(0))
             throw new IllegalArgumentException("Invalid unsigned PCG64 state/inc");
+        stateLow=state.longValue();stateHigh=state.shiftRight(64).longValue();
+        incrementLow=increment.longValue();incrementHigh=increment.shiftRight(64).longValue();
     }
 
     public long nextUint64(){
-        state=state.multiply(MUL).add(increment).and(MOD128);
-        long xor=state.shiftRight(64).xor(state).and(MOD64).longValue();
-        int rotation=state.shiftRight(122).intValue()&63;
-        return Long.rotateRight(xor,rotation);
+        // 128-bit multiply/add modulo 2^128, using only baseline Java long
+        // operations available on Android. No allocation in the draw hot path.
+        long low=stateLow*MUL_LOW;
+        long high=unsignedMultiplyHigh(stateLow,MUL_LOW)+stateHigh*MUL_LOW+stateLow*MUL_HIGH;
+        long added=low+incrementLow;
+        long carry=Long.compareUnsigned(added,low)<0?1L:0L;
+        stateLow=added;stateHigh=high+incrementHigh+carry;
+        return Long.rotateRight(stateHigh^stateLow,(int)(stateHigh>>>58));
+    }
+    private static long unsignedMultiplyHigh(long x,long y){
+        long x0=x&UINT32_MASK,x1=x>>>32,y0=y&UINT32_MASK,y1=y>>>32;
+        long first=x0*y0;
+        long second=x1*y0+(first>>>32);
+        long third=x0*y1+(second&UINT32_MASK);
+        return x1*y1+(second>>>32)+(third>>>32);
     }
     public long nextUint32(){
         if(hasCached32){

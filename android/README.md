@@ -158,3 +158,19 @@ python android/core/qualify_work_blocks.py --jdk <JDK-directory>
 
 Host checks do not replace the consolidated physical-device qualification.
 The Lab variant is never required to increase production throughput.
+
+
+### Portable engine performance update (0.5.3)
+
+Portable C3 work uses exact PCG64 arithmetic and cached rotor mappings on CPU.
+At CPU/GPU 100%, supported devices may qualify the resident Vulkan solver using
+an independent full-unit CPU comparison. CPU and GPU then process disjoint
+256-trajectory cohorts, with a measured split and CPU recovery if GPU work fails.
+Other settings retain the existing CPU path. Battery, temperature, pause and stop
+protections remain active. GPU support is qualified per device; utilization is
+not guaranteed to reach 100% for every workload.
+
+The Monitor shows completed units and jobs per wall second over a 30-second
+window (shorter during startup). Unfinished work is never counted. A portable
+unit contains 4096 trajectories and 512 iterations; rates from the bounded engine
+are not directly comparable. Queue and wait diagnostics remain separate.

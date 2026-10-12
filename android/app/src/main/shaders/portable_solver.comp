@@ -1,0 +1,97 @@
+#version 450
+// Experimental portable_event_v1 resident trajectory solver. NOT wired into production.
+// Host must validate the checksum-qualified positive qint table, key envelopes,
+// tape bounds, buffer lengths and disjoint trajectory ownership before dispatch.
+// Scalar std430 buffers require no optional int64 or scalar-layout feature.
+layout(local_size_x=32) in;
+layout(std430,binding=0) readonly buffer Reference { int reference[]; };
+layout(std430,binding=1) readonly buffer Tape { int tape[]; };
+layout(std430,binding=2) buffer State { int state[]; };
+layout(push_constant) uniform Parameters {
+    int trajectories; int iterations; int initialize; int minPairs;
+    int maxPairs; int kindCount; int kinds[6];
+} params;
+// reference: cipher[72], electrical tables[625], qint[26^4].
+// state stride86: current key42, best key42, current cost, best cost.
+// tape: ((iteration * trajectories + trajectory) * 5) + op,a,b,value,allowance.
+const int WIRES=72, QUADS=697, STRIDE=86;
+int mod26(int x){int r=x%26;return r<0?r+26:r;}
+int forwardRotor(int rotor,int x,int pos,int ring){
+    int shift=pos-ring;return mod26(reference[WIRES+1+rotor*26+mod26(x+shift)]-shift);
+}
+int reverseRotor(int rotor,int x,int pos,int ring){
+    int shift=pos-ring;return mod26(reference[WIRES+313+rotor*26+mod26(x+shift)]-shift);
+}
+bool notch(int rotor,int p){
+    if(rotor==0)return p==16;if(rotor==1)return p==4;
+    if(rotor==2)return p==21;if(rotor==3)return p==9;
+    if(rotor==4)return p==25;return p==25||p==12;
+}
+void stepPositions(inout int p[4],int middle,int right){
+    bool m=notch(middle,p[2]),r=notch(right,p[3]);
+    if(m)p[1]=mod26(p[1]+1);if(m||r)p[2]=mod26(p[2]+1);p[3]=mod26(p[3]+1);
+}
+int score(int key[42]){
+    int shell=key[0],ro=shell%6;shell/=6;
+    int mo=shell%7;shell/=7;int left=shell%8;shell/=8;
+    int greek=8+shell%2,reflector=10+shell/2,middle=0,right=0;
+    for(int i=0;i<8;i++){if(i==left)continue;if(mo==0){middle=i;break;}mo--;}
+    for(int i=0;i<8;i++){if(i==left||i==middle)continue;if(ro==0){right=i;break;}ro--;}
+    int p[4];for(int j=0;j<4;j++)p[j]=key[5+j];
+    int kind=key[39],at=key[40],param=key[41];
+    int full=0,lc=0,rc=0,rolling=0;
+    for(int i=0;i<72;i++){
+        int steps=1;
+        if(i==at){
+            if(kind==1)steps=0;
+            else if(kind==2)steps=2;
+            else if(kind==3){for(int j=0;j<param;j++)stepPositions(p,middle,right);p[3]=mod26(p[3]-param);}
+            else if(kind==4)p[2]=mod26(p[2]+1);
+            else if(kind==5)p[2]=mod26(p[2]-1);
+            else if(kind==6)for(int j=0;j<4;j++)p[j]=key[35+j];
+        }
+        for(int j=0;j<steps;j++)stepPositions(p,middle,right);
+        int x=key[9+reference[i]];
+        x=forwardRotor(right,x,p[3],key[4]);x=forwardRotor(middle,x,p[2],key[3]);
+        x=forwardRotor(left,x,p[1],key[2]);x=forwardRotor(greek,x,p[0],key[1]);
+        x=reference[WIRES+1+reflector*26+x];
+        x=reverseRotor(greek,x,p[0],key[1]);x=reverseRotor(left,x,p[1],key[2]);
+        x=reverseRotor(middle,x,p[2],key[3]);x=reverseRotor(right,x,p[3],key[4]);
+        rolling=(rolling%17576)*26+key[9+x];
+        if(i>=3){int cost=reference[QUADS+rolling];full+=cost;if(i<at)lc+=cost;if(i-3>=at)rc+=cost;}
+    }
+    // Validated qints are positive, so GLSL truncation equals Java floorDiv.
+    return 72*(full/69)+28*max(at>3?lc/(at-3):20000,at<69?rc/(69-at):20000);
+}
+void main(){
+    int id=int(gl_GlobalInvocationID.x);if(id>=params.trajectories)return;
+    int base=id*STRIDE,key[42],best[42];
+    for(int j=0;j<42;j++){key[j]=state[base+j];best[j]=state[base+42+j];}
+    int cost=state[base+84],bestCost=state[base+85];
+    if(params.initialize!=0){cost=score(key);bestCost=cost;for(int j=0;j<42;j++)best[j]=key[j];}
+    for(int iteration=0;iteration<params.iterations;iteration++){
+        int t=(iteration*params.trajectories+id)*5;
+        int op=tape[t],a=tape[t+1],b=tape[t+2],v=tape[t+3],proposed[42];
+        for(int j=0;j<42;j++)proposed[j]=key[j];
+        if(op<58){
+            if(a==b)b=(b+1)%26;
+            int pa=proposed[9+a],pb=proposed[9+b];
+            proposed[9+a]=a;proposed[9+pa]=pa;proposed[9+b]=b;proposed[9+pb]=pb;
+            if(v%3!=0){proposed[9+a]=b;proposed[9+b]=a;}
+            int plugged=0;for(int j=0;j<26;j++)if(proposed[9+j]!=j)plugged++;
+            if(plugged/2<params.minPairs||plugged/2>params.maxPairs)
+                for(int j=9;j<35;j++)proposed[j]=key[j];
+        }else if(op<70)proposed[5+v%4]=a;
+        else if(op<78)proposed[2+v%3]=a;
+        else if(op<82)proposed[0]=v%1344;
+        else if(op<88)proposed[39]=params.kinds[v%params.kindCount];
+        else if(op<94)proposed[40]=(1+v%17)*4;
+        else if(op<97)proposed[41]=1+v%4;
+        else proposed[35+v%4]=a;
+        int candidate=score(proposed);
+        if(candidate<=cost+tape[t+4]){cost=candidate;for(int j=0;j<42;j++)key[j]=proposed[j];}
+        if(cost<bestCost){bestCost=cost;for(int j=0;j<42;j++)best[j]=key[j];}
+    }
+    for(int j=0;j<42;j++){state[base+j]=key[j];state[base+42+j]=best[j];}
+    state[base+84]=cost;state[base+85]=bestCost;
+}
